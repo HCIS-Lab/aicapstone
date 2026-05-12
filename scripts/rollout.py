@@ -370,8 +370,25 @@ class RateLimiter:
 
     def sleep(self, env):
         next_wakeup_time = self.last_time + self.sleep_duration
+        rendered = False
         while time.time() < next_wakeup_time:
             time.sleep(self.render_period)
+            env.sim.render()
+            rendered = True
+
+        # CRITICAL: at least one render() per env.step is required for
+        # cameras to refresh in headless Isaac Sim. When the policy
+        # inference (e.g. diffusion DDPM at 100 steps) is slower than
+        # sleep_duration, the while-loop body never runs, env.sim.render()
+        # is never called, and BOTH the recorder AND the policy obs keep
+        # serving the same stale camera frame for the whole episode —
+        # which then looks exactly like a "collapsed policy" because the
+        # diffusion model sees identical visual input every step and
+        # outputs the same near-init action every step. Force one
+        # render here so the next env.step's obs reflects an updated
+        # scene. ~10-30ms overhead is negligible against 1s/step
+        # diffusion inference.
+        if not rendered:
             env.sim.render()
 
         self.last_time = self.last_time + self.sleep_duration
