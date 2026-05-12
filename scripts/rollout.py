@@ -666,7 +666,9 @@ def main():
     # zero (model collapsed), constant (bad checkpoint), or genuinely
     # varying values (policy is fine — investigate env / action interp).
     debug_actions = os.environ.get("EVAL_DEBUG_ACTIONS", "").strip().lower() == "true"
-    debug_steps_cap = int(os.environ.get("EVAL_DEBUG_ACTION_STEPS", "12"))
+    # Coalesce empty / whitespace to default — docker-compose's
+    # `${VAR:-}` substitution sets unset vars to "" and int("") raises.
+    debug_steps_cap = int((os.environ.get("EVAL_DEBUG_ACTION_STEPS", "") or "12").strip() or "12")
     if debug_actions:
         print(
             f"[debug-action] enabled — will dump action+joint_pos for "
