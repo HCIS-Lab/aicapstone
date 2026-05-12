@@ -12,6 +12,7 @@
 """Launch Isaac Sim Simulator first."""
 import json as _json
 import multiprocessing
+import os
 from pathlib import Path as _Path
 
 
@@ -119,6 +120,26 @@ parser.add_argument(
     action="store_true",
     help="Print observation and action tensor shapes around each local LeRobot inference call.",
 )
+parser.add_argument(
+    "--video_out",
+    type=str,
+    default="",
+    help=(
+        "Optional path to write a side-by-side wrist+front MP4 replay. "
+        "Frames are taken from the same observation tensors the policy "
+        "sees (zero extra render cost) and piped to ffmpeg. Empty string "
+        "disables recording. Backend leaderboard sets this to "
+        "{LOCAL_STAGE_DIR}/{submission_id}/eval_video.mp4 and moves the "
+        "result to NAS after the eval completes."
+    ),
+)
+parser.add_argument(
+    "--video_fps",
+    type=int,
+    default=10,
+    help="Capture rate (frames/sec) for --video_out. Sim runs at 60Hz; "
+         "default 10 fps grabs every 6th sim step.",
+)
 
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
@@ -207,6 +228,116 @@ def setup_dual_viewports():
                 print(f"Second docking attempt failed: {str(e2)}")
     else:
         print("Error: Could not find one or both viewport windows for docking.")
+
+
+class _EvalVideoRecorder:
+    """Pipe raw RGB frames from the observation cameras into an ffmpeg
+    subprocess that encodes to H.264 MP4.
+
+    Why use the obs cameras instead of grabbing the viewport:
+      * No extra render cost — the policy already triggered the camera
+        renders on this frame, we're just reusing the tensors.
+      * The result IS what the policy saw, which is the most useful
+        thing to show students afterwards.
+      * Deterministic resolution — viewport sizes vary with the
+        compositor's window state in headless Isaac Sim.
+
+    The recorder is forgiving: any error closes the pipe and disables
+    future frames, but never raises into the eval loop. A broken
+    recording must never fail a submission.
+    """
+
+    def __init__(self, out_path: str, fps: int):
+        self.out_path = out_path
+        self.fps = max(1, int(fps))
+        self.proc = None
+        self.width = None
+        self.height = None
+        self.frames_written = 0
+        self._broken = False
+
+    def _spawn(self, width: int, height: int) -> None:
+        import subprocess as _sp
+        self.width, self.height = width, height
+        os.makedirs(os.path.dirname(self.out_path) or ".", exist_ok=True)
+        cmd = [
+            "ffmpeg", "-y",
+            "-hide_banner", "-loglevel", "warning",
+            "-f", "rawvideo",
+            "-pix_fmt", "rgb24",
+            "-s", f"{width}x{height}",
+            "-r", str(self.fps),
+            "-i", "-",
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
+            self.out_path,
+        ]
+        try:
+            self.proc = _sp.Popen(cmd, stdin=_sp.PIPE)
+            print(
+                f"[rollout] eval recording → {self.out_path} "
+                f"({width}x{height} @ {self.fps} fps)",
+                flush=True,
+            )
+        except (OSError, FileNotFoundError) as exc:
+            print(f"[rollout] could not start ffmpeg ({exc}); video disabled", flush=True)
+            self._broken = True
+            self.proc = None
+
+    def write(self, obs_dict: dict) -> None:
+        """Stitch wrist + front and push one frame.
+
+        Both cameras are (H, W, 3) uint8 tensors with a leading batch
+        dim, sized 480x640 by the env config. Side-by-side gives a
+        1280x480 frame.
+        """
+        if self._broken:
+            return
+        wrist = obs_dict.get("wrist")
+        front = obs_dict.get("front")
+        if wrist is None or front is None:
+            return
+        try:
+            w_arr = wrist.cpu().numpy().astype(np.uint8)[0]
+            f_arr = front.cpu().numpy().astype(np.uint8)[0]
+            frame = np.concatenate([w_arr, f_arr], axis=1)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[rollout] frame conversion failed: {exc}", flush=True)
+            self._broken = True
+            return
+        if self.proc is None:
+            h, w = frame.shape[:2]
+            self._spawn(w, h)
+            if self._broken or self.proc is None:
+                return
+        try:
+            self.proc.stdin.write(frame.tobytes())
+            self.frames_written += 1
+        except (BrokenPipeError, OSError) as exc:
+            print(f"[rollout] ffmpeg pipe broke after {self.frames_written} frames: {exc}", flush=True)
+            self._broken = True
+            self.proc = None
+
+    def close(self) -> None:
+        if self.proc is None:
+            return
+        try:
+            self.proc.stdin.close()
+        except Exception:
+            pass
+        try:
+            self.proc.wait(timeout=30)
+        except Exception:
+            try: self.proc.kill()
+            except Exception: pass
+        print(
+            f"[rollout] eval recording finalized: {self.frames_written} frames "
+            f"→ {self.out_path}",
+            flush=True,
+        )
+        self.proc = None
 
 
 class RateLimiter:
@@ -520,6 +651,14 @@ def main():
 
     setup_dual_viewports()
 
+    # Eval video recorder. Empty --video_out (or recorder spawn failure
+    # later) is a no-op — never blocks the eval. capture_stride throttles
+    # us to args_cli.video_fps from the env's args_cli.step_hz so we
+    # don't try to encode every sim step.
+    recorder = _EvalVideoRecorder(args_cli.video_out, args_cli.video_fps) \
+        if args_cli.video_out else None
+    capture_stride = max(1, args_cli.step_hz // max(1, args_cli.video_fps))
+    sim_step_counter = 0
 
     success_count, episode_count = 0, 1
     while max_episode_count <= 0 or episode_count <= max_episode_count:
@@ -545,6 +684,9 @@ def main():
                     if env.cfg.dynamic_reset_gripper_effort_limit:
                         dynamic_reset_gripper_effort_limit_sim(env, teleop_device)
                     obs_dict, _, reset_terminated, reset_time_outs, _ = env.step(action)
+                    sim_step_counter += 1
+                    if recorder and sim_step_counter % capture_stride == 0:
+                        recorder.write(obs_dict["policy"])
                     if reset_terminated[0]:
                         success = True
                         break
@@ -573,6 +715,9 @@ def main():
         f"[Evaluation] Final success rate: {success_count / max_episode_count:.3f} "
         f" [{success_count}/{max_episode_count}]"
     )
+
+    if recorder:
+        recorder.close()
 
     env.close()
     simulation_app.close()
