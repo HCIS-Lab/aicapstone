@@ -135,4 +135,27 @@ RUN printf "numpy==1.26.0\n" > /tmp/sim-constraints.txt \
 RUN python -m pip install --upgrade pip==26.0.1 \
     && python -m pip install --no-deps numpy==1.26.0
 
+# ── Sidecar venv for lerobot >=0.5.1 policies (multi_task_dit, etc.) ─────────
+# isaacsim 5.1 pins Python ==3.11 and lerobot 0.5.1 pins Python >=3.12, so
+# these two cannot coexist in one interpreter. We install Python 3.12 + a
+# dedicated venv whose only purpose is to host lerobot inference for policy
+# types whitelisted by SIDECAR_POLICY_TYPES in scripts/rollout.py. The main
+# (3.11) interpreter drives Isaac Sim and shells out to this venv via
+# scripts/policy_sidecar.py, exchanging observations / actions over pipes.
+# Placed at the end of the Dockerfile so unrelated changes don't bust cache.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.12 \
+        python3.12-dev \
+        python3.12-venv \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3.12 -m venv /opt/lerobot-py312 \
+    && /opt/lerobot-py312/bin/pip install --upgrade pip \
+    && /opt/lerobot-py312/bin/pip install \
+        torch==2.7.0 \
+        torchvision==0.22.0 \
+        --index-url https://download.pytorch.org/whl/cu128 \
+    && /opt/lerobot-py312/bin/pip install \
+        "lerobot[multi_task_dit]==0.5.1"
+
 CMD ["/bin/bash"]

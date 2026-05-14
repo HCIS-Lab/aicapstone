@@ -603,18 +603,240 @@ class LeRobotSyncPolicy:
         return torch.from_numpy(actions[:, None, :])
 
 
+# Policy types that can't be loaded in this Python 3.11 interpreter (they
+# require lerobot >=0.5.1, which pins Python >=3.12, while isaacsim 5.1.0
+# pins Python ==3.11). For these, inference runs in a sidecar venv and
+# we exchange observations / actions over stdin/stdout. Extend this set
+# whenever a new such policy type is added upstream.
+SIDECAR_POLICY_TYPES: set[str] = {"multi_task_dit"}
+
+
+class LeRobotSidecarPolicy:
+    """Drives a separate Python 3.12 interpreter that hosts a lerobot >=0.5.1
+    policy. The interface mirrors LeRobotSyncPolicy so the main loop is
+    agnostic to which path runs.
+
+    The sidecar interpreter is fixed at construction time; if it crashes
+    mid-eval we propagate as an exception (no automatic restart — easier
+    to surface real bugs in the worker logs)."""
+
+    def __init__(
+        self,
+        policy_type: str,
+        pretrained_name_or_path: str,
+        task_type: str,
+        camera_infos: dict[str, tuple[int, int]],
+        actions_per_chunk: int,
+        device: str,
+        debug_policy_shapes: bool = False,
+    ):
+        import subprocess
+        import pickle as _pickle
+        import struct as _struct
+
+        if actions_per_chunk <= 0:
+            raise ValueError(
+                f"policy_action_horizon must be positive, got {actions_per_chunk}."
+            )
+
+        self._pickle = _pickle
+        self._struct = _struct
+        self.task_type = task_type
+        self.actions_per_chunk = actions_per_chunk
+        self.device = device
+        self.debug_policy_shapes = debug_policy_shapes
+
+        if task_type == "so101leader":
+            self.state_joint_names = SINGLE_ARM_JOINT_NAMES
+            self.action_dim = len(SINGLE_ARM_JOINT_NAMES)
+        elif task_type == "franka_panda":
+            self.state_joint_names = FRANKA_JOINT_NAMES
+            self.action_dim = 8
+        else:
+            raise ValueError(
+                f"Task type {task_type} not supported for sidecar LeRobot inference yet."
+            )
+
+        self.camera_keys = list(camera_infos.keys())
+        lerobot_features = {
+            "observation.state": {
+                "dtype": "float32",
+                "shape": (len(self.state_joint_names),),
+                "names": [f"{j}.pos" for j in self.state_joint_names],
+            }
+        }
+        for k, shape in camera_infos.items():
+            lerobot_features[f"observation.images.{k}"] = {
+                "dtype": "image",
+                "shape": (shape[0], shape[1], 3),
+                "names": ["height", "width", "channels"],
+            }
+
+        sidecar_py = os.environ.get(
+            "LEROBOT_SIDECAR_PYTHON", "/opt/lerobot-py312/bin/python"
+        )
+        sidecar_script = str(_Path(__file__).resolve().parent / "policy_sidecar.py")
+        print(
+            f"[rollout] launching sidecar: {sidecar_py} {sidecar_script}",
+            flush=True,
+        )
+        self._proc = subprocess.Popen(
+            [sidecar_py, "-u", sidecar_script],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=None,  # inherit parent's stderr so child logs land in eval log
+            bufsize=0,
+        )
+
+        self._rpc({
+            "op": "init",
+            "policy_type": policy_type,
+            "checkpoint_dir": pretrained_name_or_path,
+            "device": device,
+            "lerobot_features": lerobot_features,
+        })
+        print(f"Sidecar LeRobot policy '{policy_type}' is ready.", flush=True)
+
+    # ── IPC helpers ────────────────────────────────────────────────
+    # The sidecar runs under numpy 2.x and the parent under numpy 1.x, so we
+    # can't let pickle embed numpy-version-specific module paths in the wire
+    # format. Serialise ndarrays as plain ``(dtype, shape, bytes)`` blobs in
+    # both directions. Strings, floats, ints, plain dicts/lists/tuples
+    # pickle fine across numpy versions.
+    _ND_TAG = "__ndarray__"
+
+    def _encode_obj(self, obj):
+        if isinstance(obj, np.ndarray):
+            arr = np.ascontiguousarray(obj)
+            return {
+                self._ND_TAG: True,
+                "dtype": str(arr.dtype),
+                "shape": tuple(arr.shape),
+                "data": arr.tobytes(),
+            }
+        if isinstance(obj, dict):
+            return {k: self._encode_obj(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [self._encode_obj(v) for v in obj]
+        if isinstance(obj, tuple):
+            return tuple(self._encode_obj(v) for v in obj)
+        return obj
+
+    def _decode_obj(self, obj):
+        if isinstance(obj, dict):
+            if obj.get(self._ND_TAG):
+                return np.frombuffer(obj["data"], dtype=np.dtype(obj["dtype"])).reshape(obj["shape"])
+            return {k: self._decode_obj(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [self._decode_obj(v) for v in obj]
+        if isinstance(obj, tuple):
+            return tuple(self._decode_obj(v) for v in obj)
+        return obj
+
+    def _write_frame(self, obj) -> None:
+        body = self._pickle.dumps(self._encode_obj(obj), protocol=self._pickle.HIGHEST_PROTOCOL)
+        self._proc.stdin.write(self._struct.pack("<Q", len(body)))
+        self._proc.stdin.write(body)
+        self._proc.stdin.flush()
+
+    def _read_frame(self):
+        header = self._proc.stdout.read(8)
+        if not header or len(header) < 8:
+            rc = self._proc.poll()
+            raise RuntimeError(
+                f"Sidecar exited unexpectedly (rc={rc}). See stderr above."
+            )
+        (n,) = self._struct.unpack("<Q", header)
+        body = bytearray()
+        while len(body) < n:
+            chunk = self._proc.stdout.read(n - len(body))
+            if not chunk:
+                rc = self._proc.poll()
+                raise RuntimeError(
+                    f"Sidecar truncated response (rc={rc}). See stderr above."
+                )
+            body += chunk
+        return self._decode_obj(self._pickle.loads(bytes(body)))
+
+    def _rpc(self, payload: dict) -> dict:
+        self._write_frame(payload)
+        reply = self._read_frame()
+        if not reply.get("ok"):
+            raise RuntimeError(
+                f"Sidecar error on op={payload.get('op')!r}: "
+                f"{reply.get('error')!s}\n{reply.get('traceback', '')}"
+            )
+        return reply
+
+    # ── public API mirroring LeRobotSyncPolicy ─────────────────────
+    def reset(self) -> None:
+        self._rpc({"op": "reset"})
+
+    def get_action(self, observation_dict: dict) -> torch.Tensor:
+        raw_observation = {
+            k: observation_dict[k].cpu().numpy().astype(np.uint8)[0]
+            for k in self.camera_keys
+        }
+        raw_observation["task"] = observation_dict["task_description"]
+
+        if self.task_type == "so101leader":
+            joint_pos = convert_leisaac_action_to_lerobot(observation_dict["joint_pos"])
+        elif self.task_type == "franka_panda":
+            joint_pos = observation_dict["joint_pos"].cpu().numpy()
+        else:
+            raise ValueError(
+                f"Task type {self.task_type} not supported for sidecar inference."
+            )
+        for i, name in enumerate(self.state_joint_names):
+            raw_observation[f"{name}.pos"] = joint_pos[0, i].item()
+
+        reply = self._rpc({"op": "predict", "raw_observation": raw_observation})
+        action_np = reply["action"]
+        action_tensor = torch.from_numpy(action_np).to(self.device)
+
+        if self.task_type == "so101leader":
+            actions = convert_lerobot_action_to_leisaac(action_tensor)
+        elif self.task_type == "franka_panda":
+            actions = action_tensor.to("cpu").numpy()
+        else:
+            raise ValueError(
+                f"Task type {self.task_type} not supported for sidecar inference."
+            )
+        if actions.shape[-1] != self.action_dim:
+            raise ValueError(
+                f"Expected {self.action_dim} action values for task {self.task_type}, "
+                f"got {actions.shape[-1]}."
+            )
+        return torch.from_numpy(actions[:, None, :])
+
+    def close(self) -> None:
+        if self._proc is None or self._proc.poll() is not None:
+            return
+        try:
+            self._write_frame({"op": "shutdown"})
+        except (BrokenPipeError, OSError):
+            pass
+        try:
+            self._proc.wait(timeout=10)
+        except Exception:
+            self._proc.kill()
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
+
 def preprocess_obs_dict(obs_dict: dict, language_instruction: str):
     obs_dict["task_description"] = language_instruction
     return obs_dict
 
 
 def get_policy_type(policy_type_arg: str) -> str:
-    if not policy_type_arg.startswith("lerobot-"):
-        raise ValueError(
-            f"policy_inference_sync.py only supports local LeRobot policies, got '{policy_type_arg}'. "
-            "Use --policy_type=lerobot-."
-        )
-    return policy_type_arg.split("lerobot-", 1)[1]
+    if policy_type_arg.startswith("lerobot-"):
+        return policy_type_arg.split("lerobot-", 1)[1]
+    return policy_type_arg
 
 
 def get_camera_infos(
@@ -671,8 +893,18 @@ def main():
         flush=True,
     )
 
-    policy = LeRobotSyncPolicy(
-        policy_type=get_policy_type(args_cli.policy_type),
+    resolved_policy_type = get_policy_type(args_cli.policy_type)
+    policy_cls = (
+        LeRobotSidecarPolicy
+        if resolved_policy_type in SIDECAR_POLICY_TYPES
+        else LeRobotSyncPolicy
+    )
+    print(
+        f"[rollout] policy_type={resolved_policy_type} → using {policy_cls.__name__}",
+        flush=True,
+    )
+    policy = policy_cls(
+        policy_type=resolved_policy_type,
         pretrained_name_or_path=args_cli.policy_checkpoint_path,
         task_type=policy_task_type,
         camera_infos=camera_infos,
@@ -826,6 +1058,12 @@ def main():
 
     if recorder:
         recorder.close()
+
+    # Sidecar policies own a subprocess; ask them to shut down cleanly so the
+    # next eval doesn't inherit a dangling child. No-op for in-process policies.
+    close_fn = getattr(policy, "close", None)
+    if callable(close_fn):
+        close_fn()
 
     env.close()
     simulation_app.close()
