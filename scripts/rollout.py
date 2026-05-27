@@ -923,10 +923,30 @@ def main():
     # later) is a no-op — never blocks the eval. capture_stride throttles
     # us to args_cli.video_fps from the env's args_cli.step_hz so we
     # don't try to encode every sim step.
-    recorder = _EvalVideoRecorder(args_cli.video_out, args_cli.video_fps) \
-        if args_cli.video_out else None
+    #
+    # Always print recorder state at startup so post-mortem of a missing
+    # video has at least ONE line in the eval log to anchor the
+    # diagnosis (was the recorder even constructed? what's the path?).
+    # Without this, a silent recorder failure (e.g. cameras not in
+    # obs_dict under the expected names) leaves zero trace.
+    if args_cli.video_out:
+        recorder = _EvalVideoRecorder(args_cli.video_out, args_cli.video_fps)
+        print(
+            f"[rollout] video recorder enabled "
+            f"out={args_cli.video_out} fps={args_cli.video_fps} "
+            f"capture_stride={max(1, args_cli.step_hz // max(1, args_cli.video_fps))}",
+            flush=True,
+        )
+    else:
+        recorder = None
+        print("[rollout] video recorder DISABLED (--video_out empty)", flush=True)
     capture_stride = max(1, args_cli.step_hz // max(1, args_cli.video_fps))
     sim_step_counter = 0
+    # One-shot diagnostic to confirm camera obs keys EXIST in the first
+    # observation dict. If they don't, the recorder will silently drop
+    # every frame and produce no .mp4 file — the cause of the
+    # "no replay button" issue we hit on worker-eval-2.
+    _camera_keys_logged = False
 
     # Diagnostic: when EVAL_DEBUG_ACTIONS=true, print the actual action
     # values + joint_pos for the first N sim steps of episode 1 so the
@@ -1026,6 +1046,22 @@ def main():
                     obs_dict, _, reset_terminated, reset_time_outs, _ = env.step(action)
                     sim_step_counter += 1
                     if recorder and sim_step_counter % capture_stride == 0:
+                        # One-shot dump of obs keys so we can tell at a
+                        # glance whether the recorder's expected camera
+                        # names ("wrist" / "front") are present. If not,
+                        # _EvalVideoRecorder.write() silently drops every
+                        # frame and no .mp4 file is ever produced.
+                        if not _camera_keys_logged:
+                            policy_obs = obs_dict["policy"]
+                            keys = list(policy_obs.keys()) if isinstance(policy_obs, dict) else []
+                            has_wrist = "wrist" in keys
+                            has_front = "front" in keys
+                            print(
+                                f"[rollout] first camera frame: keys={keys} "
+                                f"wrist={has_wrist} front={has_front}",
+                                flush=True,
+                            )
+                            _camera_keys_logged = True
                         recorder.write(obs_dict["policy"])
                     if reset_terminated[0]:
                         success = True
