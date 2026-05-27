@@ -287,18 +287,53 @@ class _EvalVideoRecorder:
             self.proc = None
 
     def write(self, obs_dict: dict) -> None:
-        """Stitch wrist + front and push one frame.
+        """Stitch wrist + front (or whatever two image obs exist) and push.
 
-        Both cameras are (H, W, 3) uint8 tensors with a leading batch
-        dim, sized 480x640 by the env config. Side-by-side gives a
-        1280x480 frame.
+        Tries the canonical "wrist" / "front" pair first because that's
+        what the legacy private_tasks/*_eval.py configs ship with.
+        Falls back to scanning for any two H×W×3 image-shaped entries
+        in the obs dict — newer uploaded task configs may rename their
+        cameras and we don't want a silent zero-frame recording. If
+        nothing image-shaped is found at all, prints a one-shot warning
+        so admin can see the actual obs keys.
         """
         if self._broken:
             return
         wrist = obs_dict.get("wrist")
         front = obs_dict.get("front")
         if wrist is None or front is None:
-            return
+            # Fallback: pick the first two entries that look like a
+            # camera image (4-D tensor [B, H, W, 3] or [B, H, W, C]).
+            picked = []
+            for k, v in obs_dict.items():
+                if not hasattr(v, "shape"):
+                    continue
+                shp = tuple(getattr(v, "shape", ()))
+                if len(shp) == 4 and shp[-1] in (3, 4):
+                    picked.append((k, v))
+                if len(picked) == 2:
+                    break
+            if len(picked) == 2:
+                if not getattr(self, "_fallback_logged", False):
+                    print(
+                        f"[rollout] recorder fallback: 'wrist'/'front' missing, "
+                        f"using {picked[0][0]!r} + {picked[1][0]!r} instead",
+                        flush=True,
+                    )
+                    self._fallback_logged = True
+                wrist = picked[0][1]
+                front = picked[1][1]
+            else:
+                if not getattr(self, "_missing_logged", False):
+                    keys = list(obs_dict.keys()) if hasattr(obs_dict, "keys") else "?"
+                    print(
+                        f"[rollout] recorder: no image-shaped obs found "
+                        f"(want 'wrist'+'front' or any two H×W×3 entries). "
+                        f"obs keys={keys}",
+                        flush=True,
+                    )
+                    self._missing_logged = True
+                return
         try:
             w_arr = wrist.cpu().numpy().astype(np.uint8)[0]
             f_arr = front.cpu().numpy().astype(np.uint8)[0]
