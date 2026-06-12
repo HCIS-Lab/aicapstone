@@ -460,6 +460,40 @@ def get_camera_infos(
     return camera_infos
 
 
+def _log_scene_state(env, label: str, step: int | None = None) -> None:
+    fork = env.scene["fork"]
+    knife = env.scene["knife"]
+    plate = env.scene["plate"]
+    robot = env.scene["robot"]
+    origins = env.scene.env_origins
+    fp = (fork.data.root_pos_w - origins)[0]
+    kp = (knife.data.root_pos_w - origins)[0]
+    pp = (plate.data.root_pos_w - origins)[0]
+    fd = ((fp[0] - pp[0]) ** 2 + (fp[1] - pp[1]) ** 2).sqrt().item()
+    kd = ((kp[0] - pp[0]) ** 2 + (kp[1] - pp[1]) ** 2).sqrt().item()
+    # EE position: find panda_hand body index
+    body_names = robot.data.body_names
+    ee_idx = body_names.index("panda_hand") if "panda_hand" in body_names else -1
+    if ee_idx >= 0:
+        ee_pos = (robot.data.body_pos_w[:, ee_idx, :] - origins)[0]
+        ee_str = f"({ee_pos[0]:.3f}, {ee_pos[1]:.3f}, {ee_pos[2]:.3f})"
+    else:
+        ee_str = "N/A"
+    # Gripper: panda_finger_joint1
+    joint_names = list(robot.data.joint_names)
+    g_idx = joint_names.index("panda_finger_joint1") if "panda_finger_joint1" in joint_names else -1
+    gripper_str = f"{robot.data.joint_pos[0, g_idx].item():.4f}" if g_idx >= 0 else "N/A"
+    prefix = f"[step={step}] " if step is not None else ""
+    print(
+        f"{prefix}[SCENE] {label}\n"
+        f"  plate =({pp[0]:.3f}, {pp[1]:.3f}, {pp[2]:.3f})\n"
+        f"  fork  =({fp[0]:.3f}, {fp[1]:.3f}, {fp[2]:.3f})  dist={fd:.3f}  left_of_plate={'Y' if fp[0] < pp[0] else 'N'}  within_15cm={'Y' if fd <= 0.15 else 'N'}\n"
+        f"  knife =({kp[0]:.3f}, {kp[1]:.3f}, {kp[2]:.3f})  dist={kd:.3f}  right_of_plate={'Y' if kp[0] > pp[0] else 'N'}  within_15cm={'Y' if kd <= 0.15 else 'N'}\n"
+        f"  EE    ={ee_str}  gripper(finger1)={gripper_str}",
+        flush=True,
+    )
+
+
 def main():
     task_id = resolve_task(args_cli.task)
     args_cli.task = task_id
@@ -525,6 +559,8 @@ def main():
     while max_episode_count <= 0 or episode_count <= max_episode_count:
         print(f"[Evaluation] Evaluating episode {episode_count}...")
         success, time_out = False, False
+        policy_call_count = 0
+        _log_scene_state(env, "episode start")
         while simulation_app.is_running():
             with torch.inference_mode():
                 if controller.reset_state:
@@ -538,6 +574,10 @@ def main():
                     obs_dict["policy"], language_instruction
                 )
                 actions = policy.get_action(policy_obs_dict).to(env.device)
+                policy_call_count += 1
+                if not hasattr(policy, '_debug_printed'):
+                    print(f"[DEBUG] first action chunk: {actions[0, 0, :].tolist()}", flush=True)
+                    policy._debug_printed = True
                 for action_index in range(
                     min(args_cli.policy_action_horizon, actions.shape[0])
                 ):
@@ -553,13 +593,17 @@ def main():
                         break
                     if rate_limiter:
                         rate_limiter.sleep(env)
+                if policy_call_count % 10 == 0:
+                    _log_scene_state(env, "progress", step=policy_call_count * args_cli.policy_action_horizon)
             if success:
+                _log_scene_state(env, "SUCCESS")
                 print(f"[Evaluation] Episode {episode_count} is successful!")
                 episode_count += 1
                 success_count += 1
                 policy.reset()
                 break
             if time_out:
+                _log_scene_state(env, "TIMEOUT — final positions")
                 print(f"[Evaluation] Episode {episode_count} timed out!")
                 episode_count += 1
                 policy.reset()
@@ -573,6 +617,13 @@ def main():
         f"[Evaluation] Final success rate: {success_count / max_episode_count:.3f} "
         f" [{success_count}/{max_episode_count}]"
     )
+
+    fork = env.scene["fork"]
+    knife = env.scene["knife"]
+    plate = env.scene["plate"]
+    print(f"[DEBUG] fork pos: {fork.data.root_pos_w[0].tolist()}")
+    print(f"[DEBUG] knife pos: {knife.data.root_pos_w[0].tolist()}")
+    print(f"[DEBUG] plate pos: {plate.data.root_pos_w[0].tolist()}")
 
     env.close()
     simulation_app.close()

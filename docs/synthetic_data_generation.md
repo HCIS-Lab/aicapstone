@@ -154,10 +154,13 @@ python scripts/datagen/generate.py \
     --num_envs 1 \
     --device cuda \
     --enable_cameras \
-    --num_demos 50 \
     --record \
     --use_lerobot_recorder \
-    --lerobot_dataset_repo_id HF-USER/name
+    --lerobot_dataset_repo_id HF-USER/name \
+    --augment_pose_factor 10 \
+    --augment_global_xy_jitter 0.01 \
+    --augment_local_xy_jitter 0.01 \
+    --object_poses data/<demo_directory_name>/object_poses.json
 ```
 
 Key flags:
@@ -172,7 +175,11 @@ Key flags:
 | `--use_lerobot_recorder` | Swap the default `StreamingRecorderManager` for `LeRobotRecorderManager`, which writes the LeRobot dataset format on disk instead of HDF5. |
 | `--lerobot_dataset_repo_id HF-USER/name` | Passed straight into `LeRobotDatasetCfg(repo_id=..., fps=args_cli.lerobot_dataset_fps)`. Names the on-disk dataset and the eventual HF Hub repo. |
 | `--lerobot_dataset_fps` | Frame rate the dataset is written at. Default `30`. |
-| `--num_demos 50` | Stop after **50 successful** episodes. With `--use_lerobot_recorder` the recorder runs in `EXPORT_SUCCEEDED_ONLY` mode, so failed rollouts do not count toward the target. |
+| `--object_poses data/.../object_poses.json` | Base replay set from UMI. Every `status == "full"` entry becomes one source episode before augmentation. |
+| `--augment_pose_factor 10` | Multiply the replay set in Step 3. Example: `16` source entries become `160` replay episodes. |
+| `--augment_global_xy_jitter`, `--augment_local_xy_jitter` | Scene-level and per-object translation jitter in meters. |
+| `--augment_yaw_jitter_deg` | Optional world-yaw jitter. Keep it at `0` first if you want the safest scripted rollouts. |
+| `--augment_mix_objects` | Recombine object poses across episodes before jittering. Higher diversity, slightly higher risk. |
 | `--resume` | Append to an existing dataset (`EXPORT_SUCCEEDED_ONLY_RESUME`) instead of starting fresh. |
 | `--seed` | Optional. Defaults to `int(time.time())`. |
 
@@ -182,7 +189,7 @@ What happens at runtime:
 2. `_configure_env_cfg(...)` flips `env_cfg.recorders.dataset_export_mode` to `EXPORT_SUCCEEDED_ONLY` and rewires the `success` termination so the recorder controls episode endings.
 3. `_replace_recorder_manager(...)` instantiates `LeRobotRecorderManager(env_cfg.recorders, LeRobotDatasetCfg(repo_id=..., fps=...), env)`.
 4. The main loop calls `sm.pre_step → sm.get_action → env.step → sm.advance` until `sm.is_episode_done`. On episode end, `sm.check_success(env)` decides whether the recorder commits the episode.
-5. Once `recorder_manager.exported_successful_episode_count >= num_demos`, the script exits cleanly and `recorder_manager.finalize()` writes the LeRobot dataset to disk.
+5. Once every replay episode from `--object_poses` (after optional augmentation) has been attempted, the script exits cleanly and `recorder_manager.finalize()` writes the LeRobot dataset to disk.
 
 The dataset lands locally first — the `repo_id` only names the directory at this stage. Upload is a separate step.
 
@@ -220,5 +227,5 @@ Paste your `repo_id` (e.g. `HF-USER/name`) into the Space to browse the dataset.
 - [ ] `packages/simulator/src/simulator/tasks/__init__.py` imports the new subpackage.
 - [ ] State machine subclasses `leisaac.datagen.state_machine.base.StateMachineBase` and implements `setup`, `pre_step`, `get_action`, `advance`, `reset`, `check_success`, `is_episode_done`.
 - [ ] `scripts/datagen/generate.py::TASK_REGISTRY` has `<task id>: (StateMachineClass, "<teleop_device>")`.
-- [ ] Run with `--record --use_lerobot_recorder --enable_cameras --num_demos N --lerobot_dataset_repo_id HF-USER/name`.
+- [ ] Run with `--record --use_lerobot_recorder --enable_cameras --object_poses ... --lerobot_dataset_repo_id HF-USER/name`.
 - [ ] `hf auth login`, then `hf upload <repo_id> --repo-type dataset`.

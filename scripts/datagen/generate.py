@@ -43,6 +43,41 @@ parser.add_argument(
     required=True,
     help="Path to the per-episode object_poses.json (UMI schema). Episode count = number of status=='full' entries.",
 )
+parser.add_argument(
+    "--augment_pose_factor",
+    type=int,
+    default=1,
+    help="Multiply the replay set by this factor using pose jitter. Example: 16 source episodes with factor 10 -> 160 replay episodes.",
+)
+parser.add_argument(
+    "--augment_global_xy_jitter",
+    type=float,
+    default=0.01,
+    help="Scene-level XY translation jitter in meters applied during pose augmentation.",
+)
+parser.add_argument(
+    "--augment_local_xy_jitter",
+    type=float,
+    default=0.01,
+    help="Per-object XY translation jitter in meters applied during pose augmentation.",
+)
+parser.add_argument(
+    "--augment_yaw_jitter_deg",
+    type=float,
+    default=0.0,
+    help="World-yaw jitter in degrees applied during pose augmentation.",
+)
+parser.add_argument(
+    "--augment_min_object_distance",
+    type=float,
+    default=0.05,
+    help="Minimum XY spacing in meters enforced between augmented objects.",
+)
+parser.add_argument(
+    "--augment_mix_objects",
+    action="store_true",
+    help="Mix object poses across different source episodes before jittering. Increases diversity but is slightly riskier than jitter-only augmentation.",
+)
 parser.add_argument("--quality", action="store_true", help="Whether to enable quality render mode.")
 parser.add_argument("--use_lerobot_recorder", action="store_true", help="Whether to use lerobot recorder.")
 parser.add_argument("--lerobot_dataset_repo_id", type=str, default=None, help="Lerobot Dataset repository ID.")
@@ -69,6 +104,7 @@ from leisaac.utils.env_utils import dynamic_reset_gripper_effort_limit_sim
 from simulator.datagen.state_machine.cup_stacking import CupStackingStateMachine
 from simulator.datagen.state_machine.cutlery_arrangement import CutleryArrangementStateMachine
 from simulator.datagen.state_machine.toy_blocks_collection import ToyBlocksCollectionStateMachine
+from simulator.utils.object_pose_augmentation import augment_episode_world_poses
 from simulator.utils.object_poses_loader import load_episode_poses
 
 # Maps gym task id → (StateMachineClass, device_type)
@@ -287,6 +323,7 @@ def main():
             f"Task '{task_name}' is not registered in TASK_REGISTRY.\nAvailable tasks: {list(TASK_REGISTRY.keys())}"
         )
     SMClass, device = TASK_REGISTRY[task_name]
+    run_seed = args_cli.seed if args_cli.seed is not None else int(time.time())
 
     output_dir = os.path.dirname(args_cli.dataset_file)
     output_file_name = os.path.splitext(os.path.basename(args_cli.dataset_file))[0]
@@ -295,7 +332,7 @@ def main():
 
     env_cfg = parse_env_cfg(task_name, device=args_cli.device, num_envs=args_cli.num_envs)
     env_cfg.use_teleop_device(device)
-    env_cfg.seed = args_cli.seed if args_cli.seed is not None else int(time.time())
+    env_cfg.seed = run_seed
 
     if getattr(env_cfg, "object_pose_cfg", None) is None:
         raise ValueError(
@@ -307,7 +344,24 @@ def main():
         raise ValueError(
             f"No 'status==full' episodes in {args_cli.object_poses}; nothing to replay."
         )
-    print(f"Loaded {len(episodes)} replay episodes from {args_cli.object_poses}")
+    base_episode_count = len(episodes)
+    print(f"Loaded {base_episode_count} replay episodes from {args_cli.object_poses}")
+    if args_cli.augment_pose_factor > 1:
+        episodes = augment_episode_world_poses(
+            episodes,
+            factor=args_cli.augment_pose_factor,
+            seed=run_seed,
+            global_xy_jitter=args_cli.augment_global_xy_jitter,
+            local_xy_jitter=args_cli.augment_local_xy_jitter,
+            yaw_jitter_deg=args_cli.augment_yaw_jitter_deg,
+            min_object_distance=args_cli.augment_min_object_distance,
+            mix_objects=args_cli.augment_mix_objects,
+        )
+        print(
+            "Augmented replay episodes: "
+            f"{base_episode_count} -> {len(episodes)} "
+            f"(factor={args_cli.augment_pose_factor}, mix_objects={args_cli.augment_mix_objects}, seed={run_seed})"
+        )
 
     is_direct_env = "Direct" in task_name
     _configure_env_cfg(env_cfg, args_cli, is_direct_env, output_dir, output_file_name)

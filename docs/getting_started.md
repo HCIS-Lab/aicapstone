@@ -239,6 +239,8 @@ hf download ${HF_USER}/<repo_id> --local-dir data/<demo_directory_name>
 
 ### Run data generation
 
+`object_poses.json` only supplies the per-episode object placements used to initialize the scene. If your UMI pipeline only gives you a small number of usable entries, expand them here with pose augmentation before training.
+
 Available tasks:
 - `HCIS-CupStacking-SingleArm-v0`
 - `HCIS-CutleryArrangement-SingleArm-v0`
@@ -253,8 +255,17 @@ python scripts/datagen/generate.py \
     --record \
     --use_lerobot_recorder \
     --lerobot_dataset_repo_id ${HF_USER}/<repo_id> \
+    --augment_pose_factor 10 \
+    --augment_global_xy_jitter 0.01 \
+    --augment_local_xy_jitter 0.01 \
     --object_poses data/<demo_directory_name>/object_poses.json
 ```
+
+Recommended starting point when you only have about `16` usable UMI entries:
+
+- `--augment_pose_factor 10` to turn `16` base entries into about `160` replay episodes.
+- Keep `--augment_yaw_jitter_deg 0` at first for maximum stability.
+- Add `--augment_mix_objects` only if you need more diversity after confirming the scripted policy still succeeds reliably.
 
 ### Upload the generated dataset
 
