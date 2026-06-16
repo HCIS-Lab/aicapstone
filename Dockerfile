@@ -135,4 +135,8 @@ RUN printf "numpy==1.26.0\n" > /tmp/sim-constraints.txt \
 RUN python -m pip install --upgrade pip==26.0.1 \
     && python -m pip install --no-deps numpy==1.26.0
 
+# Fix Vulkan ICD for headless EGL rendering (no X server)
+RUN echo '{"file_format_version":"1.0.0","ICD":{"library_path":"libEGL_nvidia.so.0","api_version":"1.4.312"}}' \
+    > /etc/vulkan/icd.d/nvidia_icd.json
+
 CMD ["/bin/bash"]

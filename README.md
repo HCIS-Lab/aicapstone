@@ -127,8 +127,13 @@ python scripts/datagen/generate.py \
     --record \
     --use_lerobot_recorder \
     --lerobot_dataset_repo_id ${HF_USER}/<repo_id> \
+    --augment_pose_factor 10 \
+    --augment_global_xy_jitter 0.01 \
+    --augment_local_xy_jitter 0.01 \
     --object_poses data/<demo_directory_name>/object_poses.json
 ```
+
+`--object_poses` still provides the base UMI scene setups, but `--augment_pose_factor` lets Step 3 replay more synthetic episodes from the same small set of demonstrations. For example, `16` source entries with `--augment_pose_factor 10` become `160` replay episodes.
 
 Upload the recorded dataset to Hugging Face Hub:
 

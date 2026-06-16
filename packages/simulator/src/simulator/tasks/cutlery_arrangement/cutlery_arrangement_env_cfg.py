@@ -89,7 +89,7 @@ def cutlery_arranged(
     knife_cfg: SceneEntityCfg,
     max_dist_xy: float,
 ) -> torch.Tensor:
-    """Termination: fork on +y side of plate, knife on -y side, both within max_dist_xy."""
+    """Termination: fork on -x side of plate, knife on +x side, both within max_dist_xy."""
     plate: RigidObject = env.scene[plate_cfg.name]
     fork: RigidObject = env.scene[fork_cfg.name]
     knife: RigidObject = env.scene[knife_cfg.name]
@@ -106,8 +106,8 @@ def cutlery_arranged(
     done = torch.logical_and(done, fork_dist_xy <= max_dist_xy)
     done = torch.logical_and(done, knife_dist_xy <= max_dist_xy)
 
-    fork_on_left = fork_pos[:, 0] > plate_pos[:, 0]
-    knife_on_right = knife_pos[:, 0] < plate_pos[:, 0]
+    fork_on_left = fork_pos[:, 0] < plate_pos[:, 0]
+    knife_on_right = knife_pos[:, 0] > plate_pos[:, 0]
 
     done = torch.logical_and(done, fork_on_left)
     done = torch.logical_and(done, knife_on_right)

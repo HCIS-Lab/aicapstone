@@ -76,9 +76,9 @@ _FRANKA_REST_JOINT_POS = {
     "panda_finger_joint2": 0.04,
 }
 
-# Pick order: fork first (place on +y / left of plate), then knife (place on -y / right)
+# Pick order: knife first, then fork.
 _PICK_ORDER = (_KNIFE_NAME, _FORK_NAME)
-_PLACE_X_SIGNS = (+1.0, -1.0)  # fork → +x of plate, knife → -x of plate
+_PLACE_X_SIGNS = (+1.0, -1.0)  # knife → +x of plate, fork → -x of plate
 
 _PHASE_DURATIONS_PER_OBJECT = (180, 130, 20, 160, 170, 15, 30)
 _PHASES_PER_OBJECT = len(_PHASE_DURATIONS_PER_OBJECT)
@@ -140,8 +140,8 @@ def _find_body_index(robot, body_name: str) -> int:
 class CutleryArrangementStateMachine(StateMachineBase):
     """Scripted Franka policy for arranging cutlery around a plate.
 
-    Picks up the fork and places it on the +y (left) side of the plate,
-    then picks up the knife and places it on the -y (right) side.
+    Picks up the knife and places it on the +x (right) side of the plate,
+    then picks up the fork and places it on the -x (left) side.
 
     Each object goes through 7 phases:
 

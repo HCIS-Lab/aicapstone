@@ -7,7 +7,7 @@ __pycache__/
 build/
 dist/
 *.egg-info/
-
+outputs
 # IDE
 .idea/
 .vscode/
@@ -38,3 +38,5 @@ datasets/*
 # Private external task files
 private_tasks/*
 !private_tasks/.gitkeep
+
+*.txt
