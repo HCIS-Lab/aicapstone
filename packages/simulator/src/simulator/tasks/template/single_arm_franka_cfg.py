@@ -70,7 +70,13 @@ class SingleArmFrankaTaskSceneCfg(InteractiveSceneCfg):
 
     wrist: TiledCameraCfg = TiledCameraCfg(
         prim_path="{ENV_REGEX_NS}/Robot/panda_hand/wrist",
-        offset=TiledCameraCfg.OffsetCfg(pos=(0.04, 0.0, 0.0), rot=(0.707, 0, 0, 0.707), convention="ros"),
+        offset=TiledCameraCfg.OffsetCfg(pos=(0.04, 0.0, 0.0), rot=(0.707, 0, 0, 0.707), convention="ros"), 
+
+        #    rot=(0.707, 0, 0, 0.707)
+        # => wxyz=(0, 0.707, 0.707, 0)
+        #    rot=(0, 0.707, 0, 0.707)
+        # => wxyz=(0.707, 0, 0.707, 0)
+
         data_types=["rgb"],
         spawn=sim_utils.PinholeCameraCfg(
             focal_length=24,
@@ -87,11 +93,13 @@ class SingleArmFrankaTaskSceneCfg(InteractiveSceneCfg):
     front: TiledCameraCfg = TiledCameraCfg(
         prim_path="/World/front_camera",
         offset=TiledCameraCfg.OffsetCfg(
-            pos=(0.35, 1.1, 0.6), rot=(0.0, -0.0, -0.60182, -0.79864), convention="opengl"
+            # pos=(8.19043, 6.69887, 1.06662), rot=(0.459121, 0.459121, -0.53778, -0.53778), convention="opengl"
+            pos=(7.80362, 6.78599, 1.1197), rot=(0.37025, 0.37025, -0.60242, -0.60242), convention="opengl"
         ),
         data_types=["rgb"],
         spawn=sim_utils.PinholeCameraCfg(
-            focal_length=55,
+            #focal_length=55,
+            focal_length=18.14756,
             focus_distance=400.0,
             horizontal_aperture=38.11,
             clipping_range=(0.01, 50.0),
