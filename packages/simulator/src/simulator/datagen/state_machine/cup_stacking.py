@@ -41,7 +41,7 @@ _IK_DLS_LAMBDA = 0.01
 
 _HOVER_Z_OFFSET = 0.15
 _GRASP_Z_OFFSET = 0.08
-_LIFT_Z_OFFSET = 0.2
+_LIFT_Z_OFFSET = 0.25
 _RELEASE_Z_OFFSET = 0.09
 _GRIPPER_DOWN_ROLL_W = math.pi
 _GRIPPER_DOWN_PITCH_W = 0.0
@@ -133,9 +133,9 @@ class CupStackingStateMachine(StateMachineBase):
             80,  # Phase 1: Approach down to the blue cup
             20,  # Phase 2: Close gripper to grasp
             100,  # Phase 3: Lift blue cup upward
-            85,  # Phase 4: Move blue cup above the pink cup
-            35,  # Phase 5: Lower/place and release
-            30,  # Phase 6: Move up and away
+            120,  # Phase 4: Move blue cup above the pink cup
+            40,  # Phase 5: Lower/place and release
+            80,  # Phase 6: Move up and away
         ]
 
     # ------------------------------------------------------------------
@@ -250,11 +250,13 @@ class CupStackingStateMachine(StateMachineBase):
     def _phase_move_above_pink(self, pink_cup_pos_w, num_envs, device):
         target_pos_w = pink_cup_pos_w.clone()
         target_pos_w[:, 2] += _LIFT_Z_OFFSET
+        #target_pos_w[:, 1] += 0.01 # +y 1cm
         return target_pos_w, _constant_gripper(num_envs, device, _GRIPPER_CLOSE)
 
     def _phase_lower_to_release(self, pink_cup_pos_w, num_envs, device):
         target_pos_w = pink_cup_pos_w.clone()
         target_pos_w[:, 2] += _RELEASE_Z_OFFSET
+        #target_pos_w[:, 1] += 0.01 # +y 1cm
         return target_pos_w, _constant_gripper(num_envs, device, _GRIPPER_CLOSE)
 
     def _phase_lift_away(self, pink_cup_pos_w, num_envs, device):
