@@ -84,8 +84,14 @@ class SingleArmFrankaTaskSceneCfg(InteractiveSceneCfg):
         update_period=1 / 30.0,
     )
 
+    # NOTE: must live under {ENV_REGEX_NS} so InteractiveScene clones one
+    # camera per environment. A global "/World/front_camera" yields a single
+    # sensor instance (view count == 1) while the scene reports num_envs > 1,
+    # so resetting env_ids beyond 0 indexes the size-1 sensor buffers out of
+    # bounds (CUDA device-side assert in SensorBase.reset). The offset below
+    # is now interpreted relative to each environment's origin.
     front: TiledCameraCfg = TiledCameraCfg(
-        prim_path="/World/front_camera",
+        prim_path="{ENV_REGEX_NS}/front_camera",
         offset=TiledCameraCfg.OffsetCfg(
             pos=(0.35, 1.1, 0.6), rot=(0.0, -0.0, -0.60182, -0.79864), convention="opengl"
         ),

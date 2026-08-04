@@ -9,10 +9,11 @@ from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.sim.schemas import MassPropertiesCfg
 from isaaclab.utils import configclass
 
+from leisaac.utils.domain_randomization import domain_randomization, randomize_object_uniform
 from leisaac.utils.general_assets import parse_usd_and_create_subassets
 from simulator import ASSETS_ROOT
-from simulator.utils.object_poses_loader import ObjectPoseConfig
 from simulator.assets.scenes.living_room import LIVING_ROOM_CFG, LIVING_ROOM_USD_PATH
+from simulator.utils.domain_randomization import randomize_light_conditions
 
 from simulator.tasks.template.single_arm_franka_cfg import (
     SingleArmFrankaObservationsCfg,
@@ -51,6 +52,10 @@ class ToyBlocksCollectionSceneCfg(SingleArmFrankaTaskSceneCfg):
             usd_path=str(LIVING_OBJECTS_ROOT / "Bridge" / "Bridge.usd"),
             mass_props=MassPropertiesCfg(mass=0.1),
         ),
+        init_state=RigidObjectCfg.InitialStateCfg(
+            pos=(0.32, -0.35, OBJECT_Z),
+            rot=(0.707, 0.0, 0.0, 0.707),
+        ),
     )
 
     blue_block: RigidObjectCfg = RigidObjectCfg(
@@ -59,6 +64,10 @@ class ToyBlocksCollectionSceneCfg(SingleArmFrankaTaskSceneCfg):
             usd_path=str(LIVING_OBJECTS_ROOT / "Cylinder" / "Cylinder.usd"),
             mass_props=MassPropertiesCfg(mass=0.1),
         ),
+        init_state=RigidObjectCfg.InitialStateCfg(
+            pos=(0.45, -0.35, OBJECT_Z),
+            rot=(0.707, 0.0, 0.0, 0.707),
+        ),
     )
 
     red_block: RigidObjectCfg = RigidObjectCfg(
@@ -66,6 +75,10 @@ class ToyBlocksCollectionSceneCfg(SingleArmFrankaTaskSceneCfg):
         spawn=sim_utils.UsdFileCfg(
             usd_path=str(LIVING_OBJECTS_ROOT / "Triangle" / "Triangle.usd"),
             mass_props=MassPropertiesCfg(mass=0.1),
+        ),
+        init_state=RigidObjectCfg.InitialStateCfg(
+            pos=(0.58, -0.35, OBJECT_Z),
+            rot=(0.707, 0.0, 0.0, 0.707),
         ),
     )
 
@@ -166,13 +179,33 @@ class ToyBlocksCollectionEnvCfg(SingleArmFrankaTaskEnvCfg):
 
         parse_usd_and_create_subassets(LIVING_ROOM_USD_PATH, self)
 
-        self.object_pose_cfg = ObjectPoseConfig(
-            tag_to_object=TAG_TO_OBJECT,
-            anchor_tag_id=ANCHOR_TAG_ID,
-            anchor_world_pose=ANCHOR_WORLD_POSE,
-            object_z=OBJECT_Z,
-            object_roll=OBJECT_ROLL,
-            object_pitch=OBJECT_PITCH,
-            per_object_yaw_offset=PER_OBJECT_YAW_OFFSET,
-            use_fixed_yaw=True,
+        domain_randomization(
+            self,
+            random_options=[
+                randomize_object_uniform(
+                    "green_block",
+                    pose_range={
+                        "x": (-0.05, 0.05),
+                        "y": (-0.05, 0.05),
+                        "z": (0.0, 0.0),
+                    },
+                ),
+                randomize_object_uniform(
+                    "blue_block",
+                    pose_range={
+                        "x": (-0.05, 0.05),
+                        "y": (-0.05, 0.05),
+                        "z": (0.0, 0.0),
+                    },
+                ),
+                randomize_object_uniform(
+                    "red_block",
+                    pose_range={
+                        "x": (-0.05, 0.05),
+                        "y": (-0.05, 0.05),
+                        "z": (0.0, 0.0),
+                    },
+                ),
+                randomize_light_conditions("light", textures=[], intensity_range=(1100, 1300)),
+            ],
         )

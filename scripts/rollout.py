@@ -119,6 +119,15 @@ parser.add_argument(
     action="store_true",
     help="Print observation and action tensor shapes around each local LeRobot inference call.",
 )
+parser.add_argument(
+    "--num_envs",
+    type=int,
+    default=1,
+    help=(
+        "Number of environments to simulate in parallel. Each round evaluates this many"
+        " episodes concurrently; the policy is batched across envs and reset between rounds."
+    ),
+)
 
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
@@ -184,7 +193,7 @@ def setup_dual_viewports():
 
     v2_api = vp_util.get_viewport_from_window_name("Viewport 2")
     if v2_api:
-        v2_api.camera_path = f"/World/front_camera"
+        v2_api.camera_path = "/World/envs/env_0/front_camera"
 
     # Ensure both windows exist before docking
     if v1_window and v2_window:
@@ -361,9 +370,11 @@ class LeRobotSyncPolicy:
             }
         return features
 
-    def _build_raw_observation(self, observation_dict: dict) -> dict[str, Any]:
+    def _build_raw_observation(
+        self, observation_dict: dict, env_index: int
+    ) -> dict[str, Any]:
         raw_observation = {
-            key: observation_dict[key].cpu().numpy().astype(np.uint8)[0]
+            key: observation_dict[key].cpu().numpy().astype(np.uint8)[env_index]
             for key in self.camera_keys
         }
         raw_observation["task"] = observation_dict["task_description"]
@@ -378,9 +389,31 @@ class LeRobotSyncPolicy:
             )
 
         for joint_index, joint_name in enumerate(self.state_joint_names):
-            raw_observation[f"{joint_name}.pos"] = joint_pos[0, joint_index].item()
+            raw_observation[f"{joint_name}.pos"] = joint_pos[env_index, joint_index].item()
 
         return raw_observation
+
+    def _collate_observations(self, obs_list: list[dict[str, Any]]) -> dict[str, Any]:
+        """Stack per-env prepared observations into a single batched observation.
+
+        Each entry in ``obs_list`` carries a leading batch dim of 1 (one env),
+        so tensors concatenate along dim 0 into a (num_envs, ...) batch that the
+        policy's ``select_action`` consumes in one call — keeping its internal
+        action/observation queues batch-consistent across envs.
+        """
+        if len(obs_list) == 1:
+            return obs_list[0]
+        collated: dict[str, Any] = {}
+        for key in obs_list[0]:
+            values = [obs[key] for obs in obs_list]
+            first = values[0]
+            if isinstance(first, torch.Tensor):
+                collated[key] = torch.cat(values, dim=0)
+            elif isinstance(first, list):
+                collated[key] = [item for value in values for item in value]
+            else:
+                collated[key] = values
+        return collated
 
     def _config_horizon_summary(self) -> str:
         names = ["chunk_size", "n_action_steps", "action_chunk_size", "action_horizon"]
@@ -426,14 +459,19 @@ class LeRobotSyncPolicy:
         return actions
 
     def get_action(self, observation_dict: dict) -> torch.Tensor:
-        raw_observation = self._build_raw_observation(observation_dict)
-        if self.debug_policy_shapes:
-            _print_mapping_shapes("[SyncPolicy] Raw observation:", raw_observation)
+        num_envs = observation_dict["joint_pos"].shape[0]
+        obs_batch = []
+        for env_index in range(num_envs):
+            raw_observation = self._build_raw_observation(observation_dict, env_index)
+            if self.debug_policy_shapes and env_index == 0:
+                _print_mapping_shapes("[SyncPolicy] Raw observation (env 0):", raw_observation)
+            obs_batch.append(self._prepare_observation(raw_observation))
 
-        observation = self._prepare_observation(raw_observation)
+        observation = self._collate_observations(obs_batch)
         action_tensor = self._predict_lerobot_actions(observation)
         actions = self._convert_actions_to_leisaac(action_tensor)
-        return torch.from_numpy(actions[:, None, :])
+        # actions: (num_envs, action_dim) — one action per env for this step.
+        return torch.from_numpy(actions)
 
 
 def preprocess_obs_dict(obs_dict: dict, language_instruction: str):
@@ -463,7 +501,7 @@ def get_camera_infos(
 def main():
     task_id = resolve_task(args_cli.task)
     args_cli.task = task_id
-    env_cfg = parse_env_cfg(task_id, device=args_cli.device, num_envs=1)
+    env_cfg = parse_env_cfg(task_id, device=args_cli.device, num_envs=args_cli.num_envs)
     task_type = get_task_type(task_id)
     robot_name = getattr(env_cfg, "robot_name", None)
     policy_task_type = "franka_panda" if robot_name == "franka_panda" else task_type
@@ -521,58 +559,71 @@ def main():
     setup_dual_viewports()
 
 
-    success_count, episode_count = 0, 1
-    while max_episode_count <= 0 or episode_count <= max_episode_count:
-        print(f"[Evaluation] Evaluating episode {episode_count}...")
-        success, time_out = False, False
+    # Parallel evaluation runs `num_envs` episodes per synchronized round. All
+    # envs reset together, step in lockstep on a batched policy call, and the
+    # policy is reset at each round boundary so its internal queues never mix
+    # state across episodes. IsaacLab auto-resets an env once it terminates, so
+    # we latch each env's FIRST outcome (success vs. time out) via `done_mask`
+    # and ignore any further activity until the round ends.
+    num_envs = env.num_envs
+    success_count, episodes_done = 0, 0
+    while simulation_app.is_running():
+        if max_episode_count > 0 and episodes_done >= max_episode_count:
+            break
+        # Last round may need fewer than num_envs episodes; only count those.
+        batch = (
+            num_envs
+            if max_episode_count <= 0
+            else min(num_envs, max_episode_count - episodes_done)
+        )
+        print(
+            f"[Evaluation] Evaluating episodes {episodes_done + 1}-{episodes_done + batch} "
+            f"across {num_envs} parallel env(s)..."
+        )
+
+        obs_dict, _ = env.reset()
+        policy.reset()
+        controller.reset()
+        done_mask = torch.zeros(num_envs, dtype=torch.bool, device=env.device)
+        success_mask = torch.zeros(num_envs, dtype=torch.bool, device=env.device)
+
         while simulation_app.is_running():
             with torch.inference_mode():
                 if controller.reset_state:
                     controller.reset()
-                    obs_dict, _ = env.reset()
-                    policy.reset()
-                    episode_count += 1
                     break
 
                 policy_obs_dict = preprocess_obs_dict(
                     obs_dict["policy"], language_instruction
                 )
                 actions = policy.get_action(policy_obs_dict).to(env.device)
-                for action_index in range(
-                    min(args_cli.policy_action_horizon, actions.shape[0])
-                ):
-                    action = actions[action_index, :, :]
-                    if env.cfg.dynamic_reset_gripper_effort_limit:
-                        dynamic_reset_gripper_effort_limit_sim(env, teleop_device)
-                    obs_dict, _, reset_terminated, reset_time_outs, _ = env.step(action)
-                    if reset_terminated[0]:
-                        success = True
-                        break
-                    if reset_time_outs[0]:
-                        time_out = True
-                        break
-                    if rate_limiter:
-                        rate_limiter.sleep(env)
-            if success:
-                print(f"[Evaluation] Episode {episode_count} is successful!")
-                episode_count += 1
-                success_count += 1
-                policy.reset()
-                break
-            if time_out:
-                print(f"[Evaluation] Episode {episode_count} timed out!")
-                episode_count += 1
-                policy.reset()
-                break
+                if env.cfg.dynamic_reset_gripper_effort_limit:
+                    dynamic_reset_gripper_effort_limit_sim(env, teleop_device)
+                obs_dict, _, reset_terminated, reset_time_outs, _ = env.step(actions)
+
+                newly_done = (reset_terminated | reset_time_outs) & ~done_mask
+                # A success DoneTerm reports via `terminated`; time out via `truncated`.
+                success_mask |= reset_terminated & newly_done
+                done_mask |= reset_terminated | reset_time_outs
+                if bool(done_mask.all()):
+                    break
+                if rate_limiter:
+                    rate_limiter.sleep(env)
+
+        round_success = int(success_mask[:batch].sum().item())
+        success_count += round_success
+        episodes_done += batch
         print(
-            f"[Evaluation] now success rate: {success_count / (episode_count - 1)} "
-            f" [{success_count}/{episode_count - 1}]"
+            f"[Evaluation] round done: {round_success}/{batch} succeeded; "
+            f"cumulative success rate: {success_count / episodes_done:.3f} "
+            f"[{success_count}/{episodes_done}]"
         )
 
-    print(
-        f"[Evaluation] Final success rate: {success_count / max_episode_count:.3f} "
-        f" [{success_count}/{max_episode_count}]"
-    )
+    if max_episode_count > 0:
+        print(
+            f"[Evaluation] Final success rate: {success_count / max_episode_count:.3f} "
+            f" [{success_count}/{max_episode_count}]"
+        )
 
     env.close()
     simulation_app.close()

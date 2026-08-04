@@ -3,9 +3,10 @@ References: https://github.com/LightwheelAI/leisaac
 Unified data generation script using state machines.
 
 Selects the appropriate state machine based on --task and runs the recording loop.
-Episode count is driven by --object_poses: each ``status == "full"`` entry in the
-file yields one replayed episode. Object placements are written via
-``RigidObject.write_root_pose_to_sim`` after each ``env.reset()``.
+For object-pose replay tasks, episode count is driven by --object_poses: each
+``status == "full"`` entry in the file yields one replayed episode. For
+domain-randomized tasks, use --num_demos to choose the number of reset-randomized
+episodes.
 
 Usage:
     python scripts/datagen/generate.py \
@@ -40,8 +41,14 @@ parser.add_argument("--resume", action="store_true", help="Whether to resume rec
 parser.add_argument(
     "--object_poses",
     type=str,
-    required=True,
-    help="Path to the per-episode object_poses.json (UMI schema). Episode count = number of status=='full' entries.",
+    required=False,
+    help="Path to the per-episode object_poses.json (UMI schema) for pose replay tasks.",
+)
+parser.add_argument(
+    "--num_demos",
+    type=int,
+    default=0,
+    help="Number of domain-randomized episodes to run when object pose replay is disabled.",
 )
 parser.add_argument("--quality", action="store_true", help="Whether to enable quality render mode.")
 parser.add_argument("--use_lerobot_recorder", action="store_true", help="Whether to use lerobot recorder.")
@@ -77,6 +84,12 @@ TASK_REGISTRY = {
     "HCIS-CupStacking-SingleArm-v0": (CupStackingStateMachine, "keyboard"),
     "HCIS-ToyBlocksCollection-SingleArm-v0": (ToyBlocksCollectionStateMachine, "keyboard"),
     "HCIS-CutleryArrangement-SingleArm-v0": (CutleryArrangementStateMachine, "keyboard"),
+}
+
+DOMAIN_RANDOMIZED_TASKS = {
+    "HCIS-CutleryArrangement-SingleArm-v0",
+    "HCIS-ToyBlocksCollection-SingleArm-v0",
+    "HCIS-CupStacking-SingleArm-v0",
 }
 
 
@@ -204,6 +217,38 @@ def _apply_episode_poses(env, poses):
         )
 
 
+def _resolve_episode_poses(task_name, env_cfg, args_cli):
+    """Return per-episode pose dicts, or empty dicts for reset-randomized episodes."""
+    if task_name in DOMAIN_RANDOMIZED_TASKS:
+        if args_cli.num_demos <= 0:
+            raise ValueError(
+                f"--num_demos must be greater than 0 for domain-randomized task '{task_name}'."
+            )
+        if args_cli.object_poses:
+            print(
+                f"[INFO] Ignoring --object_poses for {task_name}; "
+                "using reset-time domain randomization from the env config."
+            )
+        episodes = [{} for _ in range(args_cli.num_demos)]
+        print(f"Using {len(episodes)} domain-randomized episodes.")
+        return episodes
+
+    if not args_cli.object_poses:
+        raise ValueError(f"Task '{task_name}' requires --object_poses for pose replay.")
+
+    object_pose_cfg = getattr(env_cfg, "object_pose_cfg", None)
+    if object_pose_cfg is None:
+        raise ValueError(
+            f"Task '{task_name}' env_cfg has no 'object_pose_cfg' attribute; "
+            "cannot resolve anchor frame for --object_poses."
+        )
+    episodes = load_episode_poses(args_cli.object_poses, object_pose_cfg)
+    if not episodes:
+        raise ValueError(f"No 'status==full' episodes in {args_cli.object_poses}; nothing to replay.")
+    print(f"Loaded {len(episodes)} replay episodes from {args_cli.object_poses}")
+    return episodes
+
+
 # z below which a task object is considered to have fallen off the table.
 # Objects sit at object_z ≈ 0.05; anything under the table surface trips this.
 _FALL_THRESHOLD_Z: float = 0.0
@@ -267,13 +312,14 @@ def _on_episode_done(
         print(f"Recorded {current_recorded_demo_count} successful demonstrations.")
 
     if next_episode_idx >= total_episodes:
-        print(f"Replayed all {total_episodes} episodes. Exiting the app.")
+        print(f"Completed all {total_episodes} episodes. Exiting the app.")
         return next_episode_idx, current_recorded_demo_count, start_record_state, True, success
 
     env.reset()
     sm.reset()
     auto_terminate(env, False)
-    _apply_episode_poses(env, episodes[next_episode_idx])
+    if episodes[next_episode_idx]:
+        _apply_episode_poses(env, episodes[next_episode_idx])
     next_episode_idx += 1
 
     return next_episode_idx, current_recorded_demo_count, start_record_state, False, success
@@ -297,17 +343,7 @@ def main():
     env_cfg.use_teleop_device(device)
     env_cfg.seed = args_cli.seed if args_cli.seed is not None else int(time.time())
 
-    if getattr(env_cfg, "object_pose_cfg", None) is None:
-        raise ValueError(
-            f"Task '{task_name}' env_cfg has no 'object_pose_cfg' attribute; "
-            "cannot resolve anchor frame for --object_poses."
-        )
-    episodes = load_episode_poses(args_cli.object_poses, env_cfg.object_pose_cfg)
-    if not episodes:
-        raise ValueError(
-            f"No 'status==full' episodes in {args_cli.object_poses}; nothing to replay."
-        )
-    print(f"Loaded {len(episodes)} replay episodes from {args_cli.object_poses}")
+    episodes = _resolve_episode_poses(task_name, env_cfg, args_cli)
 
     is_direct_env = "Direct" in task_name
     _configure_env_cfg(env_cfg, args_cli, is_direct_env, output_dir, output_file_name)
@@ -351,7 +387,8 @@ def main():
         env.close()
         simulation_app.close()
         return
-    _apply_episode_poses(env, episodes[next_episode_idx])
+    if episodes[next_episode_idx]:
+        _apply_episode_poses(env, episodes[next_episode_idx])
     next_episode_idx += 1
 
     start_record_state = False

@@ -10,9 +10,10 @@ from isaaclab.sim.schemas import MassPropertiesCfg
 from isaaclab.utils import configclass
 
 from leisaac.utils.general_assets import parse_usd_and_create_subassets
+from leisaac.utils.domain_randomization import domain_randomization, randomize_object_uniform
 from simulator import ASSETS_ROOT
-from simulator.utils.object_poses_loader import ObjectPoseConfig
 from simulator.assets.scenes.dining_room import DINING_ROOM_CFG, DINING_ROOM_USD_PATH
+from simulator.utils.domain_randomization import randomize_light_conditions
 
 from simulator.tasks.template.single_arm_franka_cfg import (
     SingleArmFrankaObservationsCfg,
@@ -71,6 +72,7 @@ class CutleryArrangementSceneCfg(SingleArmFrankaTaskSceneCfg):
             usd_path=str(DINING_OBJECTS_ROOT / "Knife" / "knife.usd"),
             mass_props=MassPropertiesCfg(mass=0.1),
         ),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.50, -0.10, 0.12), rot=(0.0, 0.0, 0.0, 1.0)),
     )
 
     fork: RigidObjectCfg = RigidObjectCfg(
@@ -79,6 +81,7 @@ class CutleryArrangementSceneCfg(SingleArmFrankaTaskSceneCfg):
             usd_path=str(DINING_OBJECTS_ROOT / "Fork" / "fork.usd"),
             mass_props=MassPropertiesCfg(mass=0.1),
         ),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.55, -0.10, 0.12), rot=(1.0, 0.0, 0.0, 0.0)),
     )
 
 
@@ -162,14 +165,25 @@ class CutleryArrangementEnvCfg(SingleArmFrankaTaskEnvCfg):
 
         parse_usd_and_create_subassets(DINING_ROOM_USD_PATH, self)
 
-        self.object_pose_cfg = ObjectPoseConfig(
-            tag_to_object=TAG_TO_OBJECT,
-            anchor_tag_id=ANCHOR_TAG_ID,
-            anchor_world_pose=ANCHOR_WORLD_POSE,
-            object_z=OBJECT_Z,
-            object_roll=OBJECT_ROLL,
-            object_pitch=OBJECT_PITCH,
-            per_object_yaw_offset=PER_OBJECT_YAW_OFFSET,
-            use_fixed_yaw=True,
-            ignored_object_names=IGNORED_OBJECT_NAMES,
+        domain_randomization(
+            self,
+            random_options=[
+                randomize_object_uniform(
+                    "knife",
+                    pose_range={
+                        "x": (-0.05, 0.05),
+                        "y": (-0.05, 0.05),
+                        "z": (0.0, 0.0),
+                    },
+                ),
+                randomize_object_uniform(
+                    "fork",
+                    pose_range={
+                        "x": (0.02, 0.05),
+                        "y": (0.02, 0.05),
+                        "z": (0.0, 0.0),
+                    },
+                ),
+                randomize_light_conditions("light", textures=[], intensity_range=(1100, 1300)),
+            ],
         )

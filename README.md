@@ -110,6 +110,8 @@ hf download ${HF_USER}/<repo_id> --local-dir data/<demo_directory_name>
 
 ## Run the data generation pipeline
 
+All three HCIS tasks ship with preconfigured domain randomization: object poses are re-randomized at every environment reset.  Set `--num_demos` to the number of randomized episodes to run, and `--use_lerobot_recorder` to save in LeRobot format. Only successful episodes are exported.
+
 The `--lerobot_dataset_repo_id` should be your own Hugging Face dataset repo.
 
 Available tasks:
@@ -127,8 +129,10 @@ python scripts/datagen/generate.py \
     --record \
     --use_lerobot_recorder \
     --lerobot_dataset_repo_id ${HF_USER}/<repo_id> \
-    --object_poses data/<demo_directory_name>/object_poses.json
+    --num_demos 20
 ```
+
+The dataset lands in `~/.cache/huggingface/lerobot/${HF_USER}/<repo_id>/`.
 
 Upload the recorded dataset to Hugging Face Hub:
 
