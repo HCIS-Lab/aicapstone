@@ -28,7 +28,7 @@ KITCHEN_OBJECTS_ROOT = ASSETS_ROOT / "scenes" / "kitchen" / "objects"
 TAG_TO_OBJECT: dict[int, str] = {1: "blue_cup", 2: "pink_cup"}
 ANCHOR_TAG_ID: int = 0
 ANCHOR_WORLD_POSE: tuple[float, float, float] = (0.0, 0.0, 0.0)
-OBJECT_Z: float = 0.12
+OBJECT_Z: float = 1.0
 OBJECT_ROLL: float = 0.0
 OBJECT_PITCH: float = 0.0
 
@@ -44,7 +44,7 @@ class CupStackingEvalSceneCfg(SingleArmFrankaTaskSceneCfg):
             usd_path=str(KITCHEN_OBJECTS_ROOT / "BlueCup" / "BlueCup.usd"),
             mass_props=MassPropertiesCfg(mass=0.1),
         ),
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.36, -0.4, 0.12), rot=(1.0, 0.0, 0.0, 0.0)),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(9.0, 6.45, 1.0), rot=(1.0, 0.0, 0.0, 0.0)),
     )
     pink_cup: RigidObjectCfg = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Scene/pink_cup",
@@ -52,7 +52,7 @@ class CupStackingEvalSceneCfg(SingleArmFrankaTaskSceneCfg):
             usd_path=str(KITCHEN_OBJECTS_ROOT / "PinkCup" / "PinkCup.usd"),
             mass_props=MassPropertiesCfg(mass=0.1),
         ),
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.46, -0.4, 0.12), rot=(1.0, 0.0, 0.0, 0.0)),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(9.2, 6.5, 1.0), rot=(1.0, 0.0, 0.0, 0.0)),
     )
 
 
@@ -105,7 +105,7 @@ class CupStackingEvalEnvCfg(SingleArmFrankaTaskEnvCfg):
         self.viewer.lookat = (0.4, -1.3, -0.2)
         self.dynamic_reset_gripper_effort_limit = False
 
-        self.scene.robot.init_state.pos = (0.35, -0.74, 0.01)
+        self.scene.robot.init_state.pos = (9.0, 6.0, 0.9)
         self.scene.robot.init_state.rot = (0.707, 0.0, 0.0, 0.707)
         self.scene.robot.init_state.joint_pos = {
             "panda_joint1": 0.0,
