@@ -24,12 +24,21 @@ from simulator.tasks.template.single_arm_franka_cfg import (
 
 DINING_OBJECTS_ROOT = ASSETS_ROOT / "scenes" / "dining_room" / "objects"
 
+# kujiale dining_table_0000 (light wood, convexDecomposition colliders, self-contained).
+# Origin is at the table's vertical CENTER (spans z +-0.355), so place at z=0.355 to
+# sit the base on the floor (top ends up at ~0.71).
+DININGTABLE_USD = str(
+    ASSETS_ROOT / "scenes" / "dining_table_0000" / "dining_table.usd"
+)
+DININGTABLE_WORLD_POS: tuple[float, float, float] = (7.0, 3.5, 0.354)
+DININGTABLE_WORLD_ROT: tuple[float, float, float, float] = ( 0.70711, 0.0, 0.0, -0.70711)
+
 TAG_TO_OBJECT: dict[int, str] = {2: "knife", 3: "fork"}
 ANCHOR_TAG_ID: int = 0
 # Anchor for fork/knife spawns; placed away from the fixed plate so the cutlery
 # starts well clear of the plate area.
 ANCHOR_WORLD_POSE: tuple[float, float, float] = (0.40, 0.10, 0.0)
-OBJECT_Z: float = 0.05
+OBJECT_Z: float = 1.00
 OBJECT_ROLL: float = 0.0
 OBJECT_PITCH: float = 0.0
 # Per-USD yaw correction (rad) so the spawned object matches its visual heading
@@ -45,7 +54,7 @@ IGNORED_OBJECT_NAMES: tuple[str, ...] = ("plate",)
 # Fixed plate world position. Robot is at (0.35, -0.74); plate sits in front of
 # it with ≥ 10 cm of free space on both ±y sides for fork (left) and knife
 # (right) drop targets (state machine uses `_PLACE_Y_OFFSET = 0.10`).
-PLATE_WORLD_POS: tuple[float, float, float] = (0.50, -0.40, 0.05)
+PLATE_WORLD_POS: tuple[float, float, float] = (7.0, 2.9, 0.74416) # (0.50, -0.40, 0.05)
 
 
 @configclass
@@ -53,6 +62,19 @@ class CutleryArrangementSceneCfg(SingleArmFrankaTaskSceneCfg):
     """Scene configuration for the cutlery arrangement task."""
 
     scene: AssetBaseCfg = DINING_ROOM_CFG.replace(prim_path="{ENV_REGEX_NS}/Scene")
+
+    # Standalone white table (matte, static colliders baked in). Static furniture
+    # -> AssetBaseCfg (no rigid body). Tune DININGTABLE_WORLD_POS for the scene.
+    diningtable: AssetBaseCfg = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/Scene/diningtable",
+        init_state=AssetBaseCfg.InitialStateCfg(
+            pos=DININGTABLE_WORLD_POS,
+            rot=DININGTABLE_WORLD_ROT,
+        ),
+        spawn=sim_utils.UsdFileCfg(
+            usd_path=DININGTABLE_USD,
+        ),
+    )
 
     plate: RigidObjectCfg = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Scene/plate",
@@ -149,8 +171,18 @@ class CutleryArrangementEnvCfg(SingleArmFrankaTaskEnvCfg):
         self.viewer.lookat = (0.4, -1.3, -0.2)
         self.dynamic_reset_gripper_effort_limit = False
 
-        self.scene.robot.init_state.pos = (0.35, -0.74, 0.01)
+        self.scene.robot.init_state.pos = (7.0, 2.4, 0.6)
         self.scene.robot.init_state.rot = (0.707, 0.0, 0.0, 0.707)
+
+
+        # Per-task front camera: pos (7.05,4.5,1.6), aimed at table workspace
+        # (7,3.5,~1.05). rot computed as opengl look-at quaternion (w,x,y,z).
+        self.scene.front.offset.pos = (7.05, 4.77904, 1.16108)
+        self.scene.front.offset.rot = (0.00747, 0.00888, 0.64418, 0.76479)
+        self.scene.front.offset.convention = "opengl"
+        self.scene.front.spawn.focal_length = 55
+
+
         self.scene.robot.init_state.joint_pos = {
             "panda_joint1": 0.0,
             "panda_joint2": -math.pi / 4.0,
