@@ -23,10 +23,13 @@ from simulator.tasks.template.single_arm_franka_cfg import (
 
 LIVING_OBJECTS_ROOT = ASSETS_ROOT / "scenes" / "living_room" / "objects"
 
+TABLE_USD = str(ASSETS_ROOT / "scenes" / "table_0000" / "table_0000.usd")
+TABLE_WORLD_POS: tuple[float, float, float] = (3.3, 1.1, 0.183)
+
 TAG_TO_OBJECT: dict[int, str] = {1: "green_block", 2: "blue_block", 3: "red_block"}
 ANCHOR_TAG_ID: int = 0
 ANCHOR_WORLD_POSE: tuple[float, float, float] = (0.35, 0.0, 0.0)
-OBJECT_Z: float = 0.05
+OBJECT_Z: float = 0.45
 OBJECT_ROLL: float = 0.0
 OBJECT_PITCH: float = 0.0
 PER_OBJECT_YAW_OFFSET: dict[str, float] = {
@@ -43,6 +46,12 @@ configure_seed(42)
 class ToyBlocksCollectionEvalSceneCfg(SingleArmFrankaTaskSceneCfg):
     scene: AssetBaseCfg = LIVING_ROOM_CFG.replace(prim_path="{ENV_REGEX_NS}/Scene")
 
+    table: AssetBaseCfg = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/Scene/table",
+        init_state=AssetBaseCfg.InitialStateCfg(pos=TABLE_WORLD_POS),
+        spawn=sim_utils.UsdFileCfg(usd_path=TABLE_USD),
+    )
+
     green_block: RigidObjectCfg = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Scene/green_block",
         spawn=sim_utils.UsdFileCfg(
@@ -50,7 +59,7 @@ class ToyBlocksCollectionEvalSceneCfg(SingleArmFrankaTaskSceneCfg):
             mass_props=MassPropertiesCfg(mass=0.1),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(0.32, -0.35, OBJECT_Z),
+            pos=(3.099251, 1.009812, OBJECT_Z),
             rot=(0.707, 0.0, 0.0, 0.707),
         ),
     )
@@ -62,7 +71,7 @@ class ToyBlocksCollectionEvalSceneCfg(SingleArmFrankaTaskSceneCfg):
             mass_props=MassPropertiesCfg(mass=0.1),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(0.45, -0.35, OBJECT_Z),
+            pos=(3.356005, 0.965095, OBJECT_Z),
             rot=(0.707, 0.0, 0.0, 0.707),
         ),
     )
@@ -74,7 +83,7 @@ class ToyBlocksCollectionEvalSceneCfg(SingleArmFrankaTaskSceneCfg):
             mass_props=MassPropertiesCfg(mass=0.1),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(0.58, -0.35, OBJECT_Z),
+            pos=(3.220758, 0.840893, OBJECT_Z),
             rot=(0.707, 0.0, 0.0, 0.707),
         ),
     )
@@ -82,7 +91,7 @@ class ToyBlocksCollectionEvalSceneCfg(SingleArmFrankaTaskSceneCfg):
     storage_box: RigidObjectCfg = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Scene/storage_box",
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(0.65, -0.55, 0.05),
+            pos=(3.0, 0.8, 0.36348),
             rot=(1.0, 0.0, 0.0, 0.0),
         ),
         spawn=sim_utils.UsdFileCfg(
@@ -156,8 +165,14 @@ class ToyBlocksCollectionEvalEnvCfg(SingleArmFrankaTaskEnvCfg):
         self.viewer.lookat = (0.4, -1.3, -0.2)
         self.dynamic_reset_gripper_effort_limit = False
 
-        self.scene.robot.init_state.pos = (0.35, -0.74, 0.01)
+        self.scene.robot.init_state.pos = (3.3, 0.35, 0.28)
         self.scene.robot.init_state.rot = (0.707, 0.0, 0.0, 0.707)
+
+        self.scene.front.offset.pos = (3.3, 2.85, 1.1)
+        self.scene.front.offset.rot = (0.0, 0.0, -0.58292, -0.81253)
+        self.scene.front.offset.convention = "opengl"
+        self.scene.front.spawn.focal_length = 55
+
         self.scene.robot.init_state.joint_pos = {
             "panda_joint1": 0.0,
             "panda_joint2": -math.pi / 4.0,
