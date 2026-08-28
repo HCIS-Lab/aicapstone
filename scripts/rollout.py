@@ -528,7 +528,15 @@ def main():
     for _ in range(20):
         simulation_app.update()
     print("[rollout] resetting environment...", flush=True)
-    obs_dict, _ = env.reset()
+    # Every env interaction -- reset included -- must run under inference_mode.
+    # IsaacLab's asset data buffers (e.g. RigidObjectData.root_link_pose_w) are
+    # lazily refilled from PhysX on first access after a sim step, so whichever
+    # mode the *step* runs in decides whether those cached tensors are inference
+    # tensors. A reset outside inference_mode then does an in-place write
+    # (`self._data.root_link_pose_w[env_ids] = ...`) on an inference tensor and
+    # raises "Inplace update to inference tensor outside InferenceMode".
+    with torch.inference_mode():
+        obs_dict, _ = env.reset()
     print("[rollout] env.reset() returned", flush=True)
 
     language_instruction = args_cli.policy_language_instruction
@@ -581,7 +589,8 @@ def main():
             f"across {num_envs} parallel env(s)..."
         )
 
-        obs_dict, _ = env.reset()
+        with torch.inference_mode():
+            obs_dict, _ = env.reset()
         policy.reset()
         controller.reset()
         done_mask = torch.zeros(num_envs, dtype=torch.bool, device=env.device)
