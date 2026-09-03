@@ -70,13 +70,7 @@ class SingleArmFrankaTaskSceneCfg(InteractiveSceneCfg):
 
     wrist: TiledCameraCfg = TiledCameraCfg(
         prim_path="{ENV_REGEX_NS}/Robot/panda_hand/wrist",
-        offset=TiledCameraCfg.OffsetCfg(pos=(0.04, 0.0, 0.0), rot=(0.707, 0, 0, 0.707), convention="ros"), 
-
-        #    rot=(0.707, 0, 0, 0.707)
-        # => wxyz=(0, 0.707, 0.707, 0)
-        #    rot=(0, 0.707, 0, 0.707)
-        # => wxyz=(0.707, 0, 0.707, 0)
-
+        offset=TiledCameraCfg.OffsetCfg(pos=(0.04, 0.0, 0.0), rot=(0.707, 0, 0, 0.707), convention="ros"),
         data_types=["rgb"],
         spawn=sim_utils.PinholeCameraCfg(
             focal_length=24,
@@ -90,22 +84,25 @@ class SingleArmFrankaTaskSceneCfg(InteractiveSceneCfg):
         update_period=1 / 30.0,
     )
 
-    # NOTE: must live under {ENV_REGEX_NS} so InteractiveScene clones one
-    # camera per environment. A global "/World/front_camera" yields a single
-    # sensor instance (view count == 1) while the scene reports num_envs > 1,
-    # so resetting env_ids beyond 0 indexes the size-1 sensor buffers out of
-    # bounds (CUDA device-side assert in SensorBase.reset). The offset below
-    # is now interpreted relative to each environment's origin.
+    # NOTE: must live under {ENV_REGEX_NS} so InteractiveScene clones one camera
+    # per environment, and so scripts/rollout.py finds it at
+    # "/World/envs/env_0/front_camera". A global "/World/front_camera" yields a
+    # single sensor instance (view count == 1) while the scene reports
+    # num_envs > 1, so resetting env_ids beyond 0 indexes the size-1 sensor
+    # buffers out of bounds (CUDA device-side assert in SensorBase.reset).
+    #
+    # Because the prim is env-scoped, this offset is read relative to each
+    # environment's origin. The values below are only a fallback: every task
+    # overwrites pos / rot / convention / focal_length in its own
+    # ``*_env_cfg.py`` __post_init__, aimed at that task's workspace.
     front: TiledCameraCfg = TiledCameraCfg(
         prim_path="{ENV_REGEX_NS}/front_camera",
         offset=TiledCameraCfg.OffsetCfg(
-            # pos=(8.19043, 6.69887, 1.06662), rot=(0.459121, 0.459121, -0.53778, -0.53778), convention="opengl"
-            pos=(7.80362, 6.78599, 1.1197), rot=(0.37025, 0.37025, -0.60242, -0.60242), convention="opengl"
+            pos=(0.35, 1.1, 0.6), rot=(0.0, -0.0, -0.60182, -0.79864), convention="opengl"
         ),
         data_types=["rgb"],
         spawn=sim_utils.PinholeCameraCfg(
-            #focal_length=55,
-            focal_length=18.14756,
+            focal_length=55,
             focus_distance=400.0,
             horizontal_aperture=38.11,
             clipping_range=(0.01, 50.0),
@@ -208,6 +205,14 @@ class SingleArmFrankaTaskEnvCfg(ManagerBasedRLEnvCfg):
             close_command_expr={"panda_finger_joint.*": 0.0},
         )
         self.scene.robot.spawn.rigid_props.disable_gravity = True
+        # Task-space teleop feeds joint position setpoints from differential IK.
+        # The default FRANKA_PANDA_CFG gains (stiffness 80 / damping 4) are the
+        # joint-space RL preset and are far too underdamped to track them, which
+        # shows up as the arm ringing around every command. Use the stiffer gains
+        # IsaacLab ships for IK control (FRANKA_PANDA_HIGH_PD_CFG).
+        for actuator_name in ("panda_shoulder", "panda_forearm"):
+            self.scene.robot.actuators[actuator_name].stiffness = 400.0
+            self.scene.robot.actuators[actuator_name].damping = 80.0
 
     def preprocess_device_action(self, action: dict[str, Any], teleop_device) -> torch.Tensor:
         if action.get("keyboard") is not None or action.get("gamepad") is not None:

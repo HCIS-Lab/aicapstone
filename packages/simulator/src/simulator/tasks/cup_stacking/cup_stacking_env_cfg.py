@@ -115,6 +115,21 @@ class CupStackingEnvCfg(SingleArmFrankaTaskEnvCfg):
 
         self.scene.robot.init_state.pos = (9.0, 6.0, 0.9)
         self.scene.robot.init_state.rot = (0.707, 0.0, 0.0, 0.707)
+
+        # Per-task front camera: pos (7.2,6.2,1.45), aimed at (9,6.45,1.05)
+        # over the cup spawn. rot is that look-at as an opengl quaternion
+        # (w,x,y,z).
+        # The other two tasks put the camera on the far side of the objects
+        # looking back at the arm; the kitchen has no room for that -- the arm
+        # faces +y into the backsplash (wall at y~6.8) and wall cabinets close
+        # in above z~1.3 from x~8.0 on -- so this is a raised three-quarter
+        # view from the arm's left, clearing the cabinets and framing the whole
+        # +-0.15 m cup jitter box with the arm entering from frame right.
+        self.scene.front.offset.pos = (7.80362, 6.78599, 1.1197),
+        self.scene.front.offset.rot = (0.37025, 0.37025, -0.60242, -0.60242)
+        self.scene.front.offset.convention = "opengl"
+        self.scene.front.spawn.focal_length = 18.14756
+
         self.scene.robot.init_state.joint_pos = {
             "panda_joint1": 0.0,
             "panda_joint2": -math.pi / 4.0,
