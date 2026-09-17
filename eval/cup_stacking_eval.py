@@ -44,7 +44,7 @@ class CupStackingEvalSceneCfg(SingleArmFrankaTaskSceneCfg):
             usd_path=str(KITCHEN_OBJECTS_ROOT / "BlueCup" / "BlueCup.usd"),
             mass_props=MassPropertiesCfg(mass=0.1),
         ),
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(9.0, 6.45, 1.0), rot=(1.0, 0.0, 0.0, 0.0)),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(8.95, 6.44, 1.0), rot=(1.0, 0.0, 0.0, 0.0)),
     )
     pink_cup: RigidObjectCfg = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Scene/pink_cup",
@@ -52,7 +52,7 @@ class CupStackingEvalSceneCfg(SingleArmFrankaTaskSceneCfg):
             usd_path=str(KITCHEN_OBJECTS_ROOT / "PinkCup" / "PinkCup.usd"),
             mass_props=MassPropertiesCfg(mass=0.1),
         ),
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(9.2, 6.5, 1.0), rot=(1.0, 0.0, 0.0, 0.0)),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(9.07, 6.53, 1.0), rot=(1.0, 0.0, 0.0, 0.0)),
     )
 
 
@@ -119,6 +119,11 @@ class CupStackingEvalEnvCfg(SingleArmFrankaTaskEnvCfg):
             "panda_finger_joint2": 0.04,
         }
 
+        self.scene.front.offset.pos = (7.80362, 6.78599, 1.1197)
+        self.scene.front.offset.rot = (0.37025, 0.37025, -0.60242, -0.60242)
+        self.scene.front.offset.convention = "opengl"
+        self.scene.front.spawn.focal_length = 18.14756
+
         parse_usd_and_create_subassets(KITCHEN_USD_PATH, self)
 
         domain_randomization(
@@ -127,16 +132,16 @@ class CupStackingEvalEnvCfg(SingleArmFrankaTaskEnvCfg):
                 randomize_object_uniform(
                     "blue_cup",
                     pose_range={
-                        "x": (-0.05, 0.05), 
-                        "y": (-0.05, 0.05),
+                        "x": (-0.15, 0.15), 
+                        "y": (-0.15, 0.15),
                         "z": (0.0, 0.0),
                     },
                 ),
                 randomize_object_uniform(
                     "pink_cup", 
                     pose_range={
-                        "x": (-0.05, 0.05), 
-                        "y": (-0.05, 0.05),
+                        "x": (-0.15, 0.15), 
+                        "y": (-0.15, 0.15),
                         "z": (0.0, 0.0),
                     },
                 ),

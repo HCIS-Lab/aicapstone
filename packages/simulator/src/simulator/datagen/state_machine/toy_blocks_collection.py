@@ -41,8 +41,8 @@ _IK_DLS_LAMBDA = 0.01
 
 _HOVER_Z_OFFSET = 0.3
 _GRASP_Z_OFFSET = 0.02
-_LIFT_Z_OFFSET = 0.3
-_RELEASE_Z_OFFSET = 0.09
+_LIFT_Z_OFFSET = 0.4
+_RELEASE_Z_OFFSET = 0.15
 _GRIPPER_DOWN_ROLL_W = math.pi
 _GRIPPER_DOWN_PITCH_W = 0.0
 _GRIPPER_DOWN_YAW_OFFSET_RANGE = (-0.15, 0.15)
@@ -50,7 +50,12 @@ _GRIPPER_DOWN_YAW_OFFSET_RANGE = (-0.15, 0.15)
 # jitter. π/2 because the gripper's fingers open along the EE local Y axis,
 # 90° from the detected object +x heading. Per-USD orientation correction
 # lives in env_cfg's ``per_object_yaw_offset``.
-_GRASP_YAW_OFFSET: float = math.pi / 2.0
+#_GRASP_YAW_OFFSET: float = math.pi / 2.0
+_GRASP_YAW_OFFSET_PER_OBJECT: dict[str, float] = {
+    "green_block": 0.0,
+    "blue_block": math.pi / 2.0,
+    "red_block": 0.0,
+}
 # Horizontal retreat (m) toward the robot base applied to approach + grasp
 # targets. Stops the EE from overshooting the object when the IK budget is tight
 # at the edge of the workspace. Per-object because thin / hollow USDs (Bridge,
@@ -72,8 +77,8 @@ _GRASP_Z_AT_CLOSE_PER_OBJECT: dict[str, float] = {
 # Per-object world-frame xy nudge added to the grasp anchor. Use this when a
 # specific USD's centre-of-mesh is offset from the tag-detected pose.
 _GRASP_XY_OFFSET_PER_OBJECT: dict[str, tuple[float, float]] = {
-    "green_block": (0.0, 0.0),
-    "blue_block": (-0.015, 0.0),
+    "green_block": (-0.005, -0.01),
+    "blue_block": (-0.04, 0.015),
     "red_block": (0.0, 0.0),
 }
 # Per-object world-frame xy offset added to the storage box position when
@@ -81,8 +86,8 @@ _GRASP_XY_OFFSET_PER_OBJECT: dict[str, tuple[float, float]] = {
 # separated quadrants of the box rather than along the same line.
 _DROP_XY_OFFSET_PER_OBJECT: dict[str, tuple[float, float]] = {
     "green_block": (-0.05, 0.04),
-    "blue_block": (0.0, -0.05),
-    "red_block": (0.05, 0.04),
+    "blue_block": (0.02, 0.0),
+    "red_block": (0.03, 0.04),
 }
 
 _SUCCESS_X_RANGE = (-0.12, 0.12)
@@ -102,7 +107,7 @@ _FRANKA_REST_JOINT_POS = {
 }
 
 # Per-object phase durations: hover, approach, grasp, lift, move_above_box, lower, release/retreat
-_PHASE_DURATIONS_PER_OBJECT = (180, 130, 20, 160, 170, 15, 30)
+_PHASE_DURATIONS_PER_OBJECT = (100, 30, 30, 30, 100, 30, 50)
 _PHASES_PER_OBJECT = len(_PHASE_DURATIONS_PER_OBJECT)
 
 
@@ -242,6 +247,31 @@ class ToyBlocksCollectionStateMachine(StateMachineBase):
             done = torch.logical_and(done, obj_pos[:, 2] > storage_pos[:, 2] + _SUCCESS_Z_RANGE[0])
         return bool(done.all().item())
 
+    def check_early_failure(self, env) -> bool:
+        """True if any already-placed block is outside the box → episode must fail.
+
+        Only objects the arm has fully finished (index < current) are tested, so
+        a block still mid-air/settling is never falsely flagged. The last block
+        is left to ``check_success`` at episode end.
+        """
+        n_placed = self._current_object_idx
+        if n_placed == 0:
+            return False
+        storage = env.scene[_STORAGE_BOX_NAME].data.root_pos_w - env.scene.env_origins
+        for obj_name in _OBJECT_NAMES[:n_placed]:
+            p = env.scene[obj_name].data.root_pos_w - env.scene.env_origins
+            inside = (
+                (p[:, 0] < storage[:, 0] + _SUCCESS_X_RANGE[1])
+                & (p[:, 0] > storage[:, 0] + _SUCCESS_X_RANGE[0])
+                & (p[:, 1] < storage[:, 1] + _SUCCESS_Y_RANGE[1])
+                & (p[:, 1] > storage[:, 1] + _SUCCESS_Y_RANGE[0])
+                & (p[:, 2] < storage[:, 2] + _SUCCESS_Z_RANGE[1])
+                & (p[:, 2] > storage[:, 2] + _SUCCESS_Z_RANGE[0])
+            )
+            if not bool(inside.all().item()):
+                return True
+        return False
+
     def pre_step(self, env) -> None:
         pass
 
@@ -268,7 +298,8 @@ class ToyBlocksCollectionStateMachine(StateMachineBase):
             num_envs,
             device,
             obj_quat_w.dtype,
-            yaw_offset=_GRASP_YAW_OFFSET,
+            #yaw_offset=_GRASP_YAW_OFFSET,
+            yaw_offset=_GRASP_YAW_OFFSET_PER_OBJECT.get(obj_name, 0.0)
         )
 
         grasp_anchor_w = _retreat_xy_toward(

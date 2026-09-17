@@ -29,7 +29,7 @@ TABLE_WORLD_POS: tuple[float, float, float] = (3.3, 1.1, 0.183)
 TAG_TO_OBJECT: dict[int, str] = {1: "green_block", 2: "blue_block", 3: "red_block"}
 ANCHOR_TAG_ID: int = 0
 ANCHOR_WORLD_POSE: tuple[float, float, float] = (0.35, 0.0, 0.0)
-OBJECT_Z: float = 0.45
+
 OBJECT_ROLL: float = 0.0
 OBJECT_PITCH: float = 0.0
 PER_OBJECT_YAW_OFFSET: dict[str, float] = {
@@ -59,7 +59,7 @@ class ToyBlocksCollectionEvalSceneCfg(SingleArmFrankaTaskSceneCfg):
             mass_props=MassPropertiesCfg(mass=0.1),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(3.099251, 1.009812, OBJECT_Z),
+            pos=(3.449251, 0.799812, 0.45),
             rot=(0.707, 0.0, 0.0, 0.707),
         ),
     )
@@ -71,7 +71,7 @@ class ToyBlocksCollectionEvalSceneCfg(SingleArmFrankaTaskSceneCfg):
             mass_props=MassPropertiesCfg(mass=0.1),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(3.356005, 0.965095, OBJECT_Z),
+            pos=(3.376005, 0.80095, 0.45),
             rot=(0.707, 0.0, 0.0, 0.707),
         ),
     )
@@ -83,8 +83,8 @@ class ToyBlocksCollectionEvalSceneCfg(SingleArmFrankaTaskSceneCfg):
             mass_props=MassPropertiesCfg(mass=0.1),
         ),
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(3.220758, 0.840893, OBJECT_Z),
-            rot=(0.707, 0.0, 0.0, 0.707),
+            pos=(3.340758, 0.760893, 0.45),
+            rot=(0.26788, -0.2733, 0.65215, 0.65441),
         ),
     )
 
@@ -168,7 +168,7 @@ class ToyBlocksCollectionEvalEnvCfg(SingleArmFrankaTaskEnvCfg):
         self.scene.robot.init_state.pos = (3.3, 0.35, 0.28)
         self.scene.robot.init_state.rot = (0.707, 0.0, 0.0, 0.707)
 
-        self.scene.front.offset.pos = (3.3, 2.85, 1.1)
+        self.scene.front.offset.pos = (3.3, 2.55, 1.1)
         self.scene.front.offset.rot = (0.0, 0.0, -0.58292, -0.81253)
         self.scene.front.offset.convention = "opengl"
         self.scene.front.spawn.focal_length = 55

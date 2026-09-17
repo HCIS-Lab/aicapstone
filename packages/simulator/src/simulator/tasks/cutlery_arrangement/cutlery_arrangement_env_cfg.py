@@ -38,7 +38,6 @@ ANCHOR_TAG_ID: int = 0
 # Anchor for fork/knife spawns; placed away from the fixed plate so the cutlery
 # starts well clear of the plate area.
 ANCHOR_WORLD_POSE: tuple[float, float, float] = (0.40, 0.10, 0.0)
-OBJECT_Z: float = 1.00
 OBJECT_ROLL: float = 0.0
 OBJECT_PITCH: float = 0.0
 # Per-USD yaw correction (rad) so the spawned object matches its visual heading
@@ -94,7 +93,7 @@ class CutleryArrangementSceneCfg(SingleArmFrankaTaskSceneCfg):
             usd_path=str(DINING_OBJECTS_ROOT / "Knife" / "knife.usd"),
             mass_props=MassPropertiesCfg(mass=0.1),
         ),
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.50, -0.10, 0.12), rot=(0.0, 0.0, 0.0, 1.0)),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(6.8, 3.05, 0.75), rot=(0.0, 0.0, 0.0, 1.0)),
     )
 
     fork: RigidObjectCfg = RigidObjectCfg(
@@ -103,7 +102,7 @@ class CutleryArrangementSceneCfg(SingleArmFrankaTaskSceneCfg):
             usd_path=str(DINING_OBJECTS_ROOT / "Fork" / "fork.usd"),
             mass_props=MassPropertiesCfg(mass=0.1),
         ),
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.55, -0.10, 0.12), rot=(1.0, 0.0, 0.0, 0.0)),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(7.1, 3.0, 0.75), rot=(1.0, 0.0, 0.0, 0.0)),
     )
 
 
