@@ -34,7 +34,10 @@ For details on the repo layout and developer setup, see [Developer Introduction]
 - **Hugging Face account** — datasets and model checkpoints are stored on the Hub. Create a token at <https://huggingface.co/docs/hub/en/security-tokens>.
 
 > **No local GPU?** Training and simulation require a Linux machine with an Nvidia GPU.
+
 > See [Cloud GPU Setup with GlowsAI](https://docs.google.com/presentation/d/1xPHm3gNNvLbX7aOWnY_xW5dfVLEa9XiBuskMbRsgxI8/edit?usp=sharing) for instructions on using cloud GPU instances.
+> 
+> See [Cloud GPU Setup with NVIDIA Brev](#running-on-nvidia-brev) for instructions on using a pre-built Isaac Lab environment on NVIDIA Brev.
 
 ### Installing prerequisites
 
@@ -85,6 +88,93 @@ export HF_USER=<your-huggingface-username>
 ```
 
 Set `HF_USER` each terminal session — commands throughout this project reference it.
+
+## Running on NVIDIA Brev
+
+Alternative to GlowsAI: rent a GPU from [NVIDIA Brev](https://brev.nvidia.com) and use a pre-built Isaac Lab 2.3.2 / Isaac Sim 5.1.0
+environment. It replaces *Installing prerequisites*, *Installation*, and the container launch in Step 1.
+
+### Deploy
+
+1. Install the Brev CLI and log in:
+
+    macOS (requires [Homebrew](https://brew.sh)):
+    ```bash
+    brew install brevdev/homebrew-brev/brev
+    brev --version
+    ```
+    Linux / WSL:
+    ```bash
+    bash -c "$(curl -fsSL https://raw.githubusercontent.com/brevdev/brev-cli/main/bin/install-latest.sh)"
+    brev --version
+    ```
+    Log in (opens a browser):
+    ```bash
+    brev login
+    ```
+
+2. Open the [launchable](https://brev.nvidia.com/launchable/deploy?launchableID=env-3HmXnNzoex3D9hUuIyUDkeFJbT4), select the organization
+   that holds your credits, choose an **AWS L40S** instance (`g6e.xlarge`, about $2.23/hour) with a **256 GiB** disk, and click
+   **Deploy Launchable**.
+3. Wait about 30 minutes until `brev ls` shows **RUNNING** and **READY**, then check:
+
+   ```bash
+   brev shell <instance-name>                    # isaac-lab-XXXXX
+   cat /var/lib/isaac-lab-ex-ros2-setup.state    # ready
+   nvidia-smi                                    # Driver Version: 580.x
+   ```
+
+The setup goes through `installing-driver` (replaces driver 595 with 580, which Isaac Sim 5.1.0 needs), `pulling-image`, `rebooting`, `ready`.
+These are normal while waiting: `nvidia-smi` printing `Driver/library version mismatch` before the reboot, and `brev shell` printing
+`waiting for SSH connection ... retrying` after it. Wait one or two minutes and run `brev shell` again; do not redeploy.
+
+### Install the project
+
+The environment has Isaac Sim and Isaac Lab but not this project. Isaac Sim's own Python (`/root/isaacsim/python.sh`, Python 3.11) is the
+one to use; there is no `python` command. On the VM:
+
+```bash
+cd ~ && git clone https://github.com/HCIS-Lab/aicapstone.git
+sudo docker exec -it isaac-lab-ex-ros2-isaac-sim-ex-1 bash    # shell inside the container
+```
+
+Inside the container (`/workspace` is the VM's `/`, so the clone is at `/workspace/home/ubuntu/aicapstone`):
+
+```bash
+cd /workspace/home/ubuntu/aicapstone
+
+# 1. Newer build tools (otherwise installing `evdev` fails with "Cannot import `packaging.licenses`")
+/root/isaacsim/python.sh -m pip install --upgrade setuptools==80.10.2 wheel==0.45.1 cython==3.0.11 toml==0.10.2 packaging==24.2
+
+# 2. Install the project packages, keeping NumPy at 1.26 (Isaac Sim needs it)
+printf "numpy==1.26.0\n" > /tmp/constraints.txt
+/root/isaacsim/python.sh -m pip install --use-deprecated=legacy-resolver --no-build-isolation \
+  -c /tmp/constraints.txt -e packages/simulator
+
+# 3. pip picks the newest pyarrow and pandas, which require NumPy 2 and break `lerobot`; pin older ones
+/root/isaacsim/python.sh -m pip install --no-deps pyarrow==21.0.0 pandas==3.0.6
+
+# 4. Check (prints `lerobot ok`)
+/root/isaacsim/python.sh -c "from lerobot.datasets.lerobot_dataset import LeRobotDataset; print('lerobot ok')"
+```
+
+### NOTE
+
+- Skip `make launch-isaaclab-*` in [Step 1](#Step-1:-Generate-Synthetic-Data-in-Simulation); the container is already running.
+- Use `/root/isaacsim/python.sh` instead of `python`, and add `--headless` to `scripts/datagen/generate.py` (no display over SSH).
+- The dataset is written to `/root/.cache/huggingface/lerobot/<user>/<repo_id>/`, which is mounted from `~/docker/isaac-sim/cache/main`
+  on the VM. Upload it to Hugging Face before you delete the instance.
+
+### Cost and cleanup
+
+Brev bills while an instance exists. Anything stored on the VM is lost when you delete it, so upload datasets and checkpoints first.
+
+```bash
+brev delete <instance-name>
+brev ls           # the instance must disappear
+```
+
+Do not rely on *Stop*: instances from this launchable may show `Stop failed`. If an instance stays in `DELETING` or `RUNNING`, retry and check `brev ls` until it disappears.
 
 ---
 
